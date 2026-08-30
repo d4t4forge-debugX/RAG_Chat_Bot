@@ -1,0 +1,16 @@
+streamlit
+langgraph
+langgraph-checkpoint-sqlite
+langchain
+langchain-core
+langchain-community
+langchain-google-genai
+langchain-huggingface
+langchain-text-splitters
+sentence-transformers
+faiss-cpu
+pypdf
+ddgs
+python-dotenv
+ragas==0.3.9
+langchain-google-vertexai

@@ -1,0 +1,15 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+*.db
+*.db-shm
+*.db-wal
+temp_*.pdf
+evaluation_results.json
+test.pdf
+.idea/
+.DS_Store
+requirements_current.txt
+.agents/
+.claude/

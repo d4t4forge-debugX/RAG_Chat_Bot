@@ -16,7 +16,15 @@ _THREAD_METADATA = {}
 # (in-memory only), same limitation as the retriever store above.
 _QUERY_CACHE = {}
 
+import threading
+
+# Tracks background ingestion progress, keyed by thread_id.
+# status: "running" | "done" | "error"
+_INGESTION_STATUS = {}
+
+
 def ingest_pdf_for_thread(pdf_path: str, thread_id: str, filename: str = None):
+    """Synchronous ingestion (kept for evaluation.py and the __main__ test below)."""
     chunks = load_and_split_pdf(pdf_path)
     vector_store = build_vector_store(chunks)
     retriever = get_retriever(vector_store, chunks)
@@ -29,6 +37,47 @@ def ingest_pdf_for_thread(pdf_path: str, thread_id: str, filename: str = None):
 
     return {"filename": filename or pdf_path, "chunks": len(chunks)}
 
+
+def _ingest_pdf_worker(pdf_path: str, thread_id: str, filename: str):
+    """Runs on a background thread. Updates _INGESTION_STATUS as it progresses."""
+    key = str(thread_id)
+    try:
+        _INGESTION_STATUS[key] = {"status": "running", "stage": "Loading PDF..."}
+        chunks = load_and_split_pdf(pdf_path)
+
+        _INGESTION_STATUS[key] = {"status": "running", "stage": f"Building embeddings for {len(chunks)} chunks..."}
+        vector_store = build_vector_store(chunks)
+
+        _INGESTION_STATUS[key] = {"status": "running", "stage": "Building hybrid retriever..."}
+        retriever = get_retriever(vector_store, chunks)
+
+        _THREAD_RETRIEVERS[key] = retriever
+        _THREAD_METADATA[key] = {"filename": filename or pdf_path, "chunks": len(chunks)}
+
+        _INGESTION_STATUS[key] = {
+            "status": "done",
+            "stage": "Done",
+            "result": {"filename": filename or pdf_path, "chunks": len(chunks)},
+        }
+    except Exception as e:
+        _INGESTION_STATUS[key] = {"status": "error", "stage": "Error", "error": str(e)}
+
+
+def start_ingestion_async(pdf_path: str, thread_id: str, filename: str = None):
+    """
+    Kicks off PDF ingestion on a background thread so the caller isn't
+    blocked. Progress can be checked via get_ingestion_status(thread_id).
+    """
+    thread = threading.Thread(
+        target=_ingest_pdf_worker,
+        args=(pdf_path, thread_id, filename),
+        daemon=True,
+    )
+    thread.start()
+
+
+def get_ingestion_status(thread_id: str):
+    return _INGESTION_STATUS.get(str(thread_id))
 
 def get_retriever_for_thread(thread_id: str):
     return _THREAD_RETRIEVERS.get(str(thread_id))

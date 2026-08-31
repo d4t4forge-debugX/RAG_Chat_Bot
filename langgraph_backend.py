@@ -1,5 +1,5 @@
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
+from llm_config import get_llm
 from typing import TypedDict, Annotated
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.graph.message import add_messages
@@ -68,7 +68,7 @@ def is_query_appropriate(query: str) -> bool:
 search_tool = DuckDuckGoSearchRun(region="us-en")
 
 # ---- LLM setup AFTER tools exist ----
-llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", thinking_level="low")
+llm = get_llm()
 
 tools = [search_tool, calculator, rag_tool]
 llm_with_tools = llm.bind_tools(tools)

@@ -10,6 +10,12 @@ import re
 _THREAD_RETRIEVERS = {}
 _THREAD_METADATA = {}
 
+# Simple in-memory cache for rag_tool results.
+# Key: (thread_id, query) -> avoids re-embedding + re-searching for a
+# question that's already been asked in this session. Cleared on app restart
+# (in-memory only), same limitation as the retriever store above.
+_QUERY_CACHE = {}
+
 def ingest_pdf_for_thread(pdf_path: str, thread_id: str, filename: str = None):
     chunks = load_and_split_pdf(pdf_path)
     vector_store = build_vector_store(chunks)
@@ -101,6 +107,12 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
     Always include the thread_id when calling this tool.
     Use this whenever the user asks a question that could be answered by their uploaded document.
     """
+    cache_key = (str(thread_id), query.strip().lower())
+    if cache_key in _QUERY_CACHE:
+        cached_result = dict(_QUERY_CACHE[cache_key])
+        cached_result["cache_hit"] = True
+        return cached_result
+
     retriever = get_retriever_for_thread(thread_id)
     if retriever is None:
         return {
@@ -112,9 +124,13 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
     context = [doc.page_content for doc in results]
     pages = [doc.metadata.get("page") for doc in results]
 
-    return {
+    result = {
         "query": query,
         "context": context,
         "pages": pages,
         "source_file": _THREAD_METADATA.get(str(thread_id), {}).get("filename"),
+        "cache_hit": False,
     }
+
+    _QUERY_CACHE[cache_key] = result
+    return result

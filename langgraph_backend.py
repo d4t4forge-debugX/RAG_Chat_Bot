@@ -124,7 +124,12 @@ def chat_node(state: ChatState, config=None):
             "contain a clear answer to the question, say so explicitly rather than "
             "guessing or relying on general knowledge. For example, say: "
             "'The uploaded document doesn't appear to cover this topic.' "
-            "Never fabricate facts, page numbers, or details that aren't in the retrieved context."
+            "Never fabricate facts, page numbers, or details that aren't in the retrieved context.\n\n"
+            "Do not name specific methods, techniques, formulas, or related concepts "
+            "(e.g., alternative algorithms, named equations, or related terminology) "
+            "unless they explicitly appear in the retrieved context, even if you know "
+            "from general knowledge that they are relevant. If you're tempted to add a "
+            "related term or example that isn't in the retrieved text, leave it out."
         )
     )
 

@@ -4,11 +4,13 @@ langgraph-checkpoint-sqlite
 langchain
 langchain-core
 langchain-community
+langchain-classic
 langchain-google-genai
 langchain-huggingface
 langchain-text-splitters
 sentence-transformers
 faiss-cpu
+rank_bm25
 pypdf
 ddgs
 python-dotenv

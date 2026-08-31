@@ -62,7 +62,7 @@ from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from langgraph_backend import llm
 from rag_utils import embeddings as rag_embeddings
-
+from ragas.run_config import RunConfig
 
 def score_with_ragas(results):
     dataset = EvaluationDataset.from_list([
@@ -78,11 +78,17 @@ def score_with_ragas(results):
     evaluator_llm = LangchainLLMWrapper(llm)
     evaluator_embeddings = LangchainEmbeddingsWrapper(rag_embeddings)
 
+    run_config = RunConfig(
+        timeout=180,  # give each judge-LLM call up to 3 minutes
+        max_workers=1,  # run evaluations sequentially, not concurrently
+    )
+
     scores = evaluate(
         dataset=dataset,
-        metrics=[Faithfulness(), AnswerRelevancy(), LLMContextPrecisionWithReference()],
+        metrics=[Faithfulness(), AnswerRelevancy(strictness=1), LLMContextPrecisionWithReference()],
         llm=evaluator_llm,
         embeddings=evaluator_embeddings,
+        run_config=run_config,
     )
 
     return scores

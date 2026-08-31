@@ -1,102 +1,16 @@
-# RAG Chatbot — Project Notes
+`langsmith` package already present as a transitive dependency of `langchain-core`
+(not added explicitly to `requirements.txt` since nothing imports it directly).
 
-Project path: `/Users/hawkeyez007/Desktop/RAG_Chat_Bot`
-Goal: Resume-ready RAG chatbot for placement interviews. Python 3.14, PyCharm,
-Streamlit frontend, LangGraph backend, Gemini free tier, local embeddings.
+No code changes needed for tracing itself — LangGraph auto-instruments node names
+straight from the graph definition. Added `run_name` and `metadata={"thread_id":...}`
+at the two `chatbot.invoke()` call sites (backend smoke test, Streamlit live chat)
+purely for dashboard identifiability — cosmetic, not functional.
 
-## Stack
-- LLM: Google Gemini `gemini-3.5-flash-lite` (`thinking_level="low"`)
-- Embeddings: local HuggingFace `sentence-transformers/all-MiniLM-L6-v2`
-- Vector store: FAISS
-- Lexical retrieval: BM25 (`rank_bm25` package, via `langchain_community.retrievers.BM25Retriever`)
-- Hybrid retrieval: `EnsembleRetriever` (Reciprocal Rank Fusion) — **now lives in
-  `langchain_classic.retrievers`, not `langchain.retrievers`**, as of LangChain v1.0
-- Persistence: `SqliteSaver` (LangGraph), db file `chatbot.db`
-- Web search: `ddgs` package (renamed from `duckduckgo-search`)
-- Evaluation: RAGAS 0.3.9
-
-## Files
-- `langgraph_backend.py` — LangGraph graph: guardrail_node → chat_node ⇄ tools,
-  with human_review_node gating web search. Checkpointer, retrieve_all_threads().
-- `streamlit_frontend.py` — Streamlit UI: sidebar threads, PDF upload, HITL
-  approve/reject cards, thread-switch with pending-interrupt restoration.
-- `rag_utils.py` — PDF loading/chunking/cleaning, embeddings, FAISS, BM25, hybrid
-  ensemble retriever, per-thread retriever store (`_THREAD_RETRIEVERS`,
-  `_THREAD_METADATA` dicts), `ingest_pdf_for_thread()`, `get_retriever_for_thread()`,
-  `rag_tool`.
-- `evaluation.py` — standalone RAGAS harness: ingests test.pdf fresh, runs 3
-  test questions through the real chatbot, scores with RAGAS, saves
-  `evaluation_results.json`.
-- `requirements.txt` — curated direct dependencies (not a raw pip freeze).
-- `test.pdf` — Hands-On Machine Learning by Aurélien Géron (58MB, gitignored —
-  not committed to the repo; copyrighted, redistribute-your-own-copy needed).
-
-## Architecture (current graph shape)
-
-START → guardrail_node → (conditional: route_after_guardrail)
-├─ inappropriate → END (refusal message)
-└─ appropriate → chat_node → (conditional: route_after_chat)
-├─ duckduckgo_search → human_review_node
-│ → approve → tools → chat_node (loop)
-│ → reject → chat_node (denial ToolMessage)
-├─ other tool → tools → chat_node
-└─ no tool → END
-
-- `ChatState`: `TypedDict` with `messages: Annotated[list[BaseMessage], add_messages]`
-- Tools bound to LLM: `search_tool` (DuckDuckGo), `calculator`, `rag_tool`
-- Only `search_tool` (external/untrusted network call) is gated behind human
-  approval via `interrupt()`/`Command` — not `calculator` or `rag_tool`
-  (deterministic/internal, no approval needed)
-
-## Retrieval architecture (hybrid search — in progress)
-
-`get_retriever(vector_store, chunks, k=4, bm25_k=2)` in `rag_utils.py` builds a
-hybrid retriever:
-- FAISS (semantic/dense) retriever: returns top `k=4` by vector similarity
-- BM25 (lexical/keyword) retriever: returns top `bm25_k=2` by term frequency
-- Combined via `EnsembleRetriever(retrievers=[faiss, bm25], weights=[0.7, 0.3])`
-  using weighted Reciprocal Rank Fusion
-
-**Important mechanical detail**: `EnsembleRetriever` merges the **union** of each
-sub-retriever's results and only *re-ranks* via weighting — it does NOT drop
-candidates based on weight. The only way to reduce a sub-retriever's noise
-contribution is to lower its own `k`, not just its weight. (Confirmed by testing:
-identical result *sets* appeared under `weights=[0.5,0.5]` and `weights=[0.8,0.2]`
-with equal per-retriever `k` — only the ranking order changed.)
-
-**Why hybrid at all**: FAISS/semantic-only retrieval can miss exact keyword/
-lexical matches (acronyms, rare terms, specific numbers). BM25 adds classic
-term-frequency matching to catch those cases. Combining tends to outperform
-either alone in production RAG systems.
-
-**Known issue found via RAGAS + manual chunk inspection (not yet fully
-resolved)**: this specific PDF (Hands-On ML textbook) has many end-of-chapter
-"Exercises" sections — short, numbered, keyword-dense questions covering many
-ML terms in a small space. BM25 ranks these highly for almost any ML query
-even though they're not explanatory content, because of raw keyword density.
-FAISS mostly avoids them but its own 3rd/4th-ranked picks aren't always
-strong either — the corpus itself is noisy for broad queries, independent of
-BM25.
-
-**Debugging trail**:
-1. Built hybrid retriever with `weights=[0.5, 0.5]`, `k=4` for both retrievers →
-   RAGAS scores dropped across the board vs. pre-hybrid baseline:
-   - faithfulness: 0.9583 → 0.8561
-   - answer_relevancy: 0.8203 → 0.7598
-   - context_precision: 0.5111 → 0.3921
-2. Manually inspected `evaluation_results.json` contexts — confirmed exercise-
-   list chunks were making it into the LLM's context for all 3 test questions
-   (roughly 4 of 8 retrieved chunks were off-topic exercise lists).
-3. Tried reweighting to `[0.8, 0.2]` — **result set was unchanged**, only
-   reordered. This revealed the EnsembleRetriever union/rerank mechanic above.
-4. Correct fix in progress: added independent `bm25_k` parameter (default 2)
-   to shrink BM25's candidate pool at the source rather than relying on
-   weighting. Manually verified this reduces exercise-list chunks in raw
-   retrieval output (from 4/8 to 2/6 for the "What is supervised learning?"
-   query).
-5. **Not yet done**: re-run `evaluation.py` with `bm25_k=2, weights=[0.7,0.3]`
-   to get updated RAGAS numbers and confirm whether this recovers toward the
-   pre-hybrid baseline. This is the next immediate step.
+Verified in dashboard: trace tree shows real node names (`guardrail_node`,
+`chat_node`, `route_after_guardrail`, `route_after_chat`, `human_review_node`,
+`tools`), tool call args (e.g. `duckduckgo_search` query text, `calculator` args),
+per-node token/cost/latency, and the full HITL interrupt → rejection → retry
+sequence end-to-end.
 
 ## Key Decisions & Why
 - **Local embeddings over OpenAI**: no per-call cost, good interview talking point
@@ -112,11 +26,15 @@ BM25.
 - **k=6 retrieval (pre-hybrid work, changed from k=4)**: increases context
   available to answer without ballooning prompt size too much on free-tier.
   Note: hybrid search work reintroduced `k=4` as the FAISS default while
-  tuning — reconcile this with the k=6 decision once hybrid tuning is finalized.
-- **Hybrid search added as a stretch feature** (Days 20 roadmap explicitly
-  deferred this) to demonstrate retrieval depth beyond pure vector search —
-  chosen over LangSmith tracing / LLM-swap abstraction as the first stretch
-  feature to build.
+  tuning — this is the accepted final value; the k=6 pre-hybrid decision is
+  effectively superseded by hybrid search's own tuning (k=4 FAISS + bm25_k=2).
+- **Hybrid search added as first stretch feature** (Days 20 roadmap explicitly
+  deferred this) to demonstrate retrieval depth beyond pure vector search.
+  Completed, evaluated, and committed.
+- **LangSmith tracing added as second stretch feature** — chosen over semantic
+  chunking / LLM-swap / caching because of low implementation risk (pure config,
+  no re-architecture) and strong interview value (concrete answer to "how do you
+  observe/debug your pipeline in production").
 - **requirements.txt hand-curated, not `pip freeze`**: direct dependencies only,
   mostly unpinned (except ragas==0.3.9, which must stay pinned for the manual
   patch below to apply)
@@ -169,6 +87,10 @@ BM25.
     `pip install langchain-classic` + import path change to
     `langchain_classic.retrievers`. `BM25Retriever` was unaffected — stayed
     in `langchain_community.retrievers`.
+18. **Not a bug** — LangSmith tracing integration worked cleanly on the first
+    attempt. Noted here to confirm nothing broke: verified via dashboard that
+    the full node tree, tool call args, and HITL interrupt/rejection flow all
+    traced correctly with zero code changes needed for base tracing.
 
 ## Manual patch required after any fresh venv rebuild
 `ragas==0.3.9` has an upstream bug: it unconditionally imports
@@ -195,7 +117,6 @@ After patching, clear ragas's `__pycache__` — a stale `.pyc` can mask the fix:
     faithfulness: 0.9583
     answer_relevancy: 0.8203
     context_precision: 0.5111
-This is the last known-good trustworthy baseline before hybrid search work began.
 
 **Hybrid search, `weights=[0.5,0.5]`, `k=4` both retrievers** (regressed —
 root-caused to BM25 noise, see "Retrieval architecture" section above):
@@ -206,46 +127,59 @@ root-caused to BM25 noise, see "Retrieval architecture" section above):
 **Hybrid search, `weights=[0.8,0.2]`, `k=4` both retrievers**: same scores as
 above (confirmed — weighting alone doesn't change the candidate set, only order).
 
-**Hybrid search, `bm25_k=2`, `weights=[0.7,0.3]`**: not yet measured — next step.
+**Hybrid search, `bm25_k=2`, `weights=[0.7,0.3]` (FINAL, accepted config)**:
+    faithfulness: 0.8333  [per-question: 1.0, 1.0, 0.5 — low score traced to
+                            RAGAS judge noise on n=3, not a real error; manually
+                            verified all claims in the flagged answer were
+                            faithful to retrieved context]
+    answer_relevancy: 0.8116  (near-full recovery to pre-hybrid baseline)
+    context_precision: 0.5278  (BEATS pre-hybrid baseline of 0.5111)
 
-## Git / Repo Hygiene (done, as of pre-hybrid-search session)
-- Two commits made: initial commit, then removal of accidentally-tracked `.idea/`
+## Git / Repo Hygiene
+- Four commits made so far:
+  1. Initial commit: RAG chatbot with LangGraph, HITL, RAGAS eval
+  2. Remove `.idea/` from tracking (editor config, not project source)
+  3. `d306ba3` — Add hybrid search (FAISS + BM25), tune RAGAS eval, tighten
+     groundedness prompt (includes `requirements.txt` update, `PROJECT_NOTES.md`
+     update, `.gitignore` update to exclude `PROJECT KNOWLEDGE`)
+  4. `6dc05de` — Add LangSmith tracing: run names and thread_id metadata
 - `.gitignore` covers: `.venv/`, `.env`, `__pycache__/`, `*.pyc`, `*.db`,
   `*.db-shm`, `*.db-wal`, `temp_*.pdf`, `evaluation_results.json`, `test.pdf`,
-  `.idea/`, `.DS_Store`, `requirements_current.txt`, `.agents/`, `.claude/`
+  `.idea/`, `.DS_Store`, `requirements_current.txt`, `.agents/`, `.claude/`,
+  `PROJECT KNOWLEDGE` (chat-session-attachment doc, not source — regenerated
+  fresh each session, not meant to be versioned)
 - Git identity set to real name/email
 - API key was rotated after being pasted in a chat session — treat any key
   visible outside `.env` as compromised going forward
-- **Not yet done as of hybrid-search work**: no new commit made covering the
-  hybrid search changes (BM25, EnsembleRetriever, langchain-classic dependency)
+- `requirements.txt` confirmed complete: includes `langchain-classic` and
+  `rank_bm25` (both verified installed via `pip show` before adding)
 
 ## Open Issues / Not Yet Started
-- **Hybrid search tuning (current work, in progress)**: re-run `evaluation.py`
-  with `bm25_k=2, weights=[0.7,0.3]` and compare against baselines above.
-  If it doesn't recover close to the pre-hybrid baseline, consider: lowering
-  `k` further, filtering exercise-list-pattern chunks at ingestion time via
-  regex, or reverting hybrid search entirely if it's not net-positive for
-  this corpus.
-- **`requirements.txt` not yet updated** with `langchain-classic` and
-  `rank_bm25` — needs confirming both are added
 - **Deployment** (Days 19-20) — not started. Streamlit Community Cloud is the
-  likely path but not yet decided/executed
+  likely path but not yet decided/executed. Note: will need the `ragas` manual
+  patch step documented above if evaluation is ever run in the deployed
+  environment (unlikely — eval is a local dev tool, not part of the deployed app).
 - **Resume/portfolio writeup** — not started
 - **README.md for the GitHub repo** — doesn't exist yet
-- **Other stretch features not started**: LangSmith tracing, LLM-swap
-  abstraction, semantic chunking, multi-user auth, caching, async ingestion,
-  cost/quota routing — deliberately deferred, hybrid search was picked as
-  the first stretch feature to tackle
+- **Other stretch features not started**: LLM-swap abstraction, semantic
+  chunking, multi-user auth, caching, async ingestion, cost/quota routing —
+  deliberately deferred. Hybrid search and LangSmith tracing are both complete.
 
 ## Conventions / Rules to Follow
-- User is building this from scratch for learning — explain *what* each piece
-  of code does and *why*, in small incremental steps, not large code dumps
+- User is new to practical implementation and wants every step spelled out
+  explicitly: exact terminal commands, exact PyCharm click-paths (open file →
+  Cmd+F to find → what to select → what to paste → Cmd+S to save), one step
+  at a time, waiting for "done" before proceeding to the next step. Don't
+  assume familiarity with IDE shortcuts or terminal basics.
+- Explain *what* each piece of code does and *why*, in small incremental
+  steps, not large code dumps
 - User pastes/edits code themselves after explanation; debugging is
   collaborative — read actual tracebacks/output together, don't guess
 - Prefer free/local solutions given budget constraints (local embeddings,
-  Gemini free tier, DuckDuckGo search)
+  Gemini free tier, DuckDuckGo search, LangSmith free tier)
 - Keep `requirements.txt` in sync with every new dependency; hand-curate,
-  don't just paste `pip freeze` output
+  don't just paste `pip freeze` output. Verify packages are actually
+  installed via `pip show` before adding lines, rather than assuming.
 - Streamlit apps run via `streamlit run <file>` in terminal — never PyCharm's
   Run button
 - Claude has no direct filesystem access to the user's Mac — all file edits
@@ -254,11 +188,25 @@ above (confirmed — weighting alone doesn't change the candidate set, only orde
 - When investigating a metric/bug, verify claims manually (claim-by-claim,
   reading actual retrieved context) rather than accepting aggregate scores
   or theories at face value — this pattern has repeatedly caught real issues
-  (RAGAS faithfulness investigation, and the EnsembleRetriever
-  weight-vs-k misunderstanding during hybrid search work)
+  (RAGAS faithfulness investigation, the EnsembleRetriever weight-vs-k
+  misunderstanding, and the n=3 faithfulness-noise investigation)
+- Before committing, check `git status`/`git diff` for each modified file
+  rather than assuming only the intended files changed — this caught an
+  untracked `PROJECT KNOWLEDGE` file and confirmed two files
+  (`evaluation.py`, `langgraph_backend.py`) had legitimate uncommitted
+  changes from an earlier session that matched documented bug fixes
 - Given the 20-day placement-prep timeline, favor pragmatic/simple
-  implementations defensible in an interview over premature complexity
+  implementations defensible in an interview over premature complexity.
+  Don't chase evaluator noise (e.g. single-question RAGAS score swings)
+  when manual verification already confirms correctness.
 - Files mounted in project knowledge/attachments can be stale snapshots from
   earlier sessions — always cross-check against pasted real file contents
   when something looks inconsistent, rather than assuming the mounted
   version is current
+
+## Continue from here
+Hybrid search and LangSmith tracing are both complete, evaluated/verified,
+and committed (commits `d306ba3` and `6dc05de`). Next session should pick
+one of: (1) another stretch feature from the deferred list above, (2)
+deployment (Days 19-20), or (3) README.md / resume writeup. No open
+technical debt or unresolved bugs as of this session's end.

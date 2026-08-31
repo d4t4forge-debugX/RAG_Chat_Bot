@@ -118,7 +118,11 @@ for thread_id in st.session_state["chat_threads"][::-1]:
         st.session_state["pending_interrupt"] = pending
         st.rerun()
 
-CONFIG = {"configurable": {"thread_id": st.session_state["thread_id"]}}
+CONFIG = {
+    "configurable": {"thread_id": st.session_state["thread_id"]},
+    "metadata": {"thread_id": str(st.session_state["thread_id"])},
+    "run_name": "streamlit_chat_turn",
+}
 
 def handle_graph_result(result):
     """Store the final answer or a pending interrupt, based on what the graph returned."""

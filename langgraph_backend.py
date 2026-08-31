@@ -198,7 +198,11 @@ def retrieve_all_threads():
 if __name__ == "__main__":
     import uuid
     test_thread_id = f"hitl-test-{uuid.uuid4()}"
-    CONFIG = {"configurable": {"thread_id": test_thread_id}}
+    CONFIG = {
+        "configurable": {"thread_id": test_thread_id},
+        "metadata": {"thread_id": test_thread_id},
+        "run_name": "hitl_smoke_test",
+    }
 
     print("Asking a question that should trigger a web search...\n")
     result = chatbot.invoke(

@@ -2,17 +2,18 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_community.retrievers import BM25Retriever
+from langchain_classic.retrievers import EnsembleRetriever
 import re
 
 # Stores each thread's vector store, keyed by thread_id
 _THREAD_RETRIEVERS = {}
 _THREAD_METADATA = {}
 
-
 def ingest_pdf_for_thread(pdf_path: str, thread_id: str, filename: str = None):
     chunks = load_and_split_pdf(pdf_path)
     vector_store = build_vector_store(chunks)
-    retriever = get_retriever(vector_store)
+    retriever = get_retriever(vector_store, chunks)
 
     _THREAD_RETRIEVERS[str(thread_id)] = retriever
     _THREAD_METADATA[str(thread_id)] = {
@@ -55,8 +56,21 @@ embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-
 def build_vector_store(chunks):
     vector_store = FAISS.from_documents(chunks, embeddings)
     return vector_store
-def get_retriever(vector_store, k=4):
-    return vector_store.as_retriever(search_type="similarity", search_kwargs={"k": k})
+
+def build_bm25_retriever(chunks, k=4):
+    bm25_retriever = BM25Retriever.from_documents(chunks)
+    bm25_retriever.k = k
+    return bm25_retriever
+
+def get_retriever(vector_store, chunks, k=4, bm25_k=2):
+    faiss_retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": k})
+    bm25_retriever = build_bm25_retriever(chunks, k=bm25_k)
+
+    hybrid_retriever = EnsembleRetriever(
+        retrievers=[faiss_retriever, bm25_retriever],
+        weights=[0.7, 0.3]
+    )
+    return hybrid_retriever
 
 if __name__ == "__main__":
     chunks = load_and_split_pdf("test.pdf")
@@ -66,7 +80,7 @@ if __name__ == "__main__":
     vector_store = build_vector_store(chunks)
     print("Vector store built successfully!")
 
-    retriever = get_retriever(vector_store)
+    retriever = get_retriever(vector_store, chunks)
     query = "What is supervised learning?"
     results = retriever.invoke(query)
 

@@ -1,10 +1,12 @@
 import streamlit as st
-from langgraph_backend import chatbot, retrieve_all_threads, ingest_pdf_for_thread
+from langgraph_backend import chatbot, retrieve_all_threads
+from rag_utils import start_ingestion_async, get_ingestion_status
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from langgraph.types import Command
 from rag_utils import get_retriever_for_thread
 import uuid
 import os
+import time
 
 def extract_text(content):
     if isinstance(content, str):
@@ -74,27 +76,45 @@ else:
 
 if uploaded_pdf is not None:
     if st.sidebar.button("Process PDF"):
-        with st.sidebar.status("Indexing PDF... this may take a minute", expanded=True) as status_box:
-            temp_path = f"temp_{uploaded_pdf.name}"
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_pdf.getvalue())
+        temp_path = f"temp_{uploaded_pdf.name}"
+        with open(temp_path, "wb") as f:
+            f.write(uploaded_pdf.getvalue())
 
-            summary = ingest_pdf_for_thread(
-                temp_path,
-                thread_id=str(st.session_state["thread_id"]),
-                filename=uploaded_pdf.name
-            )
+        start_ingestion_async(
+            temp_path,
+            thread_id=str(st.session_state["thread_id"]),
+            filename=uploaded_pdf.name
+        )
+        st.session_state["ingesting_temp_path"] = temp_path
+        st.rerun()
 
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
+# Poll for in-progress ingestion on every rerun (this is what makes it "async"
+# from the UI's perspective — Streamlit reruns the whole script on a timer
+# while we're polling, so the user sees live progress instead of one frozen
+# blocking spinner).
+if "ingesting_temp_path" in st.session_state:
+    status = get_ingestion_status(current_thread_id)
 
-            status_box.update(
-                label=f"Indexed {uploaded_pdf.name} ({summary['chunks']} chunks)",
-                state="complete",
-                expanded=False
-            )
+    if status is None:
+        pass  # thread hasn't posted a status yet, will show up next rerun
+    elif status["status"] == "running":
+        st.sidebar.info(f"⏳ {status['stage']}")
+        time.sleep(0.5)
+        st.rerun()
+    elif status["status"] == "done":
+        st.sidebar.success(f"Indexed {uploaded_pdf.name if uploaded_pdf else ''} ({status['result']['chunks']} chunks)")
+        try:
+            os.remove(st.session_state["ingesting_temp_path"])
+        except OSError:
+            pass
+        del st.session_state["ingesting_temp_path"]
+    elif status["status"] == "error":
+        st.sidebar.error(f"Ingestion failed: {status['error']}")
+        try:
+            os.remove(st.session_state["ingesting_temp_path"])
+        except OSError:
+            pass
+        del st.session_state["ingesting_temp_path"]
 
 st.sidebar.divider()
 

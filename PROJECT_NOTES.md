@@ -1,15 +1,12 @@
-Here's the complete, corrected `PROJECT_NOTES.md` — merged from both versions you pasted (doc 21 was the more current/accurate one; I used it as the base and folded in anything doc 22 had that wasn't stale), plus everything from today's session added in the right places. This is the full file, not a diff — replace your entire `PROJECT_NOTES.md` with this.
-
-```markdown
 # RAG Chatbot — Project Notes
 
 Project path: `/Users/hawkeyez007/Desktop/RAG_Chat_Bot`
 Goal: Resume-ready RAG chatbot for placement interviews. Python 3.14, PyCharm,
 Streamlit frontend, LangGraph backend, Gemini free tier, local embeddings.
-Deployed on Streamlit Cloud.
 GitHub: github.com/d4t4forge-debugX/RAG_Chat_Bot
+Deployment: not yet done (Streamlit Community Cloud, planned last).
 
-## Stack (confirmed against current requirements.txt / llm_config.py)
+## Stack
 - LLM: Google Gemini via `llm_config.py`'s `get_llm()` factory — defaults to
   `gemini-3.5-flash-lite` / `thinking_level="low"`, overridable via
   `LLM_MODEL` / `LLM_THINKING_LEVEL` env vars (`ChatGoogleGenerativeAI`)
@@ -18,7 +15,7 @@ GitHub: github.com/d4t4forge-debugX/RAG_Chat_Bot
 - Lexical retrieval: BM25 (`rank_bm25`, via `langchain_community.retrievers.BM25Retriever`)
 - Hybrid retrieval: `EnsembleRetriever` from `langchain_classic.retrievers`
   (moved out of core `langchain` in LangChain v1.0 — `langchain-classic` is a
-  direct dependency in requirements.txt because of this)
+  direct dependency because of this)
 - Persistence: `SqliteSaver` (`langgraph-checkpoint-sqlite`), db file `chatbot.db`
 - Web search: `ddgs` package (renamed from `duckduckgo-search`)
 - Evaluation: `ragas==0.3.9` (pinned — see manual patch note below), plus
@@ -27,67 +24,61 @@ GitHub: github.com/d4t4forge-debugX/RAG_Chat_Bot
 - Caching: in-memory dict cache on `rag_tool`, keyed by `(thread_id, query)`
 - Async ingestion: background `threading.Thread`-based PDF ingestion with
   live progress polling from the Streamlit UI
+- Testing: `pytest` (added this session — see "Automated Tests" below)
 
-## Files (roles confirmed against current code in context)
+## Files (roles)
 - **`llm_config.py`** — single source of truth for LLM selection. `get_llm()`
   reads `LLM_MODEL`/`LLM_THINKING_LEVEL` from env, falls back to
-  `gemini-3.5-flash-lite`/`low`. Used by `langgraph_backend.py` (main chat +
-  guardrail check) and `evaluation.py` (via `from langgraph_backend import llm`).
+  `gemini-3.5-flash-lite`/`low`. Used by `langgraph_backend.py` and
+  `evaluation.py`.
 - **`langgraph_backend.py`** — graph: `guardrail_node` → `chat_node` ⇄ `tools`,
-  with `human_review_node` gating only `duckduckgo_search`. Builds `llm` via
-  `get_llm()`. `ChatState` = `{messages: Annotated[list[BaseMessage], add_messages], blocked: bool}`.
-  Tools bound: `search_tool` (DuckDuckGo), `calculator`, `rag_tool` (imported
-  from `rag_utils`). `checkpointer` = `SqliteSaver` on `chatbot.db`.
-  `retrieve_all_threads()` helper. `__main__` block runs a HITL smoke test:
-  invokes with a query that should trigger web search, then loops over
-  `result["__interrupt__"]` prompting approve/reject via terminal input until
-  no interrupt remains.
-  **Cosmetic note (not yet fixed)**: `tools_condition` is imported from
-  `langgraph.prebuilt` but never used — replaced by custom `route_after_chat`/
-  `route_after_guardrail`. Harmless, listed under cleanup tasks below.
+  with `human_review_node` gating only `duckduckgo_search`. `ChatState` =
+  `{messages: Annotated[list[BaseMessage], add_messages], blocked: bool}`.
+  Tools bound: `search_tool` (DuckDuckGo), `calculator`, `rag_tool`.
+  `checkpointer` = `SqliteSaver` on `chatbot.db`. `retrieve_all_threads()`
+  helper. `__main__` block runs a terminal HITL smoke test.
+  Unused `tools_condition` import **removed this session** (cosmetic cleanup,
+  custom `route_after_chat`/`route_after_guardrail` were already doing the
+  real routing).
 - **`streamlit_frontend.py`** — sidebar: New Chat button, PDF uploader +
-  "Process PDF" button wired to `start_ingestion_async`, live polling of
-  `get_ingestion_status` (shows stage text, `st.rerun()`s every 0.5s while
-  running), thread list with switch-and-restore (`load_conversation` returns
-  `(messages, pending_interrupt)` so a paused approval survives a thread
-  switch). Main area: renders history, then either an Approve/Reject card
-  (`st.session_state["pending_interrupt"]`) or a `st.chat_input`. Currently
-  uses plain `chatbot.invoke()` (not `.stream()`) both for normal turns and
-  for resuming via `Command(resume="approve"/"reject")` — **streaming re-add
-  is in progress, see "Open Issues" below.**
-  `cleanup_finished_ingestions()` (renamed from the old `clear_stale_ingestion()`
-  — see Bug 20 below) sweeps temp files for any thread whose ingestion has
-  actually finished, regardless of which thread is currently active.
-- **`rag_utils.py`** — `load_and_split_pdf()` (PyPDFLoader +
-  `RecursiveCharacterTextSplitter`, chunk_size=1000/overlap=200, plus
-  `clean_text()` to strip orphaned unicode surrogates), `build_vector_store()`
-  (FAISS), `build_bm25_retriever()`, `get_retriever()` (builds the hybrid
+  "Process PDF" button, live polling of `get_ingestion_status`, thread list
+  with switch-and-restore. Main area renders history, then either an
+  Approve/Reject card or `st.chat_input`.
+  **Streaming implemented this session** (see below) — normal chat turns now
+  stream via `chatbot.stream()` + `st.write_stream()`; the Approve/Reject
+  resume path deliberately still uses plain `.invoke()` (explicit scope
+  decision, not a bug).
+  **PDF-replace confirmation added this session** (see below) — uploading a
+  second PDF to a thread that already has one loaded now requires an
+  explicit "Yes, replace it" click instead of silently overwriting.
+  `cleanup_finished_ingestions()` sweeps temp files for any thread whose
+  ingestion has actually finished, regardless of which thread is active.
+- **`rag_utils.py`** — `load_and_split_pdf()`, `build_vector_store()`
+  (FAISS), `build_bm25_retriever()`, `get_retriever()` (hybrid
   `EnsembleRetriever`, FAISS `k=4` + BM25 `bm25_k=2`, `weights=[0.7, 0.3]`).
-  Per-thread state: `_THREAD_RETRIEVERS`, `_THREAD_METADATA` dicts (in-memory,
-  reset on restart) — **note: `_THREAD_RETRIEVERS[thread_id] = ...` overwrites
-  on re-ingestion, so only one PDF is tracked per thread at a time; not yet
-  confirmed whether this is an intentional design choice or worth changing,
-  see "Open Issues" below.** `ingest_pdf_for_thread()` — sync version, used by
-  `evaluation.py` and this file's own `__main__` block. `_ingest_pdf_worker()`
-  + `start_ingestion_async()` + `get_ingestion_status()` — background-thread
-  ingestion with a shared `_INGESTION_STATUS` dict (keyed by thread_id) for
-  polling. `get_retriever_for_thread()`. `_QUERY_CACHE` dict +
-  `_clear_thread_cache()` (invalidates cache for a thread on re-ingestion).
-  `rag_tool` — the LLM-callable tool: checks cache first, else retrieves,
-  caches only successful results, returns `cache_hit: true/false` in output.
-- **`evaluation.py`** — standalone RAGAS harness. Ingests `test.pdf` fresh
-  into a throwaway `thread_id`, runs 3 fixed test questions through the real
-  `chatbot`, scores with `Faithfulness()`, `AnswerRelevancy(strictness=1)`,
-  `LLMContextPrecisionWithReference()` using a `RunConfig(timeout=180,
-  max_workers=1)` for Gemini-evaluator stability. Saves `evaluation_results.json`.
-- **`requirements.txt`** — hand-curated. Notable entries beyond the obvious:
-  `langchain-classic` (for `EnsembleRetriever`), `rank_bm25`, `ragas==0.3.9`
-  (pinned — required for the manual patch below), `langchain-google-vertexai`
-  (fallback import target for that same patch).
+  Per-thread state: `_THREAD_RETRIEVERS`, `_THREAD_METADATA` (in-memory,
+  resets on restart). `_THREAD_RETRIEVERS[thread_id] = ...` **overwrites on
+  re-ingestion by design** — this was investigated and decided this session
+  (see "Key Decisions" below), not left ambiguous anymore.
+  `ingest_pdf_for_thread()` (sync, used by `evaluation.py`),
+  `_ingest_pdf_worker()` + `start_ingestion_async()` + `get_ingestion_status()`
+  (async, threaded), `get_retriever_for_thread()`. `_QUERY_CACHE` dict +
+  `_clear_thread_cache()` (invalidates cache on re-ingestion). `rag_tool` —
+  checks cache first, else retrieves, caches only successful results, returns
+  `cache_hit: true/false`.
+- **`evaluation.py`** — standalone RAGAS harness. Imports were reorganized
+  this session (consolidated to the top of the file, no behavior change —
+  the file previously had imports scattered mid-file from an old
+  copy-paste pattern).
+- **`requirements.txt`** — hand-curated. Notable: `langchain-classic`,
+  `rank_bm25`, `ragas==0.3.9` (pinned), `langchain-google-vertexai`,
+  `pytest` (added this session, unpinned).
+- **`test_calculator.py`, `test_guardrail.py`, `test_rag_caching.py`** —
+  new this session, see "Automated Tests" below.
 - `test.pdf` — Hands-On Machine Learning by Aurélien Géron (gitignored, not
   committed — copyrighted).
 
-## Architecture (current graph shape, confirmed in langgraph_backend.py)
+## Architecture (graph shape)
 
 ```
 START → guardrail_node → (conditional: route_after_guardrail)
@@ -100,457 +91,346 @@ START → guardrail_node → (conditional: route_after_guardrail)
        └─ no tool_calls → END
 ```
 
-- `route_after_guardrail` checks `state.get("blocked")`.
-- `guardrail_node` only runs the appropriateness check when the last message
-  is a `HumanMessage`; uses `is_query_appropriate()`, a single permissive
-  LLM call (`llm.invoke(check_prompt)`, expects YES/NO).
-- `chat_node` builds a `SystemMessage` per-invocation that injects the
-  current `thread_id` (from `config["configurable"]["thread_id"]`) so the
-  model knows what to pass to `rag_tool`. System prompt also instructs:
-  multi-step sub-question breakdown for complex queries, explicit
-  "doesn't appear to cover this topic" fallback when retrieval is
-  insufficient, and a hard rule against naming methods/concepts not present
-  in retrieved context (groundedness guardrail).
+- `guardrail_node` runs `is_query_appropriate()` (single LLM call, expects
+  YES/NO) only when the last message is a `HumanMessage`.
+- `chat_node` builds a per-invocation `SystemMessage` injecting `thread_id`
+  so the model knows what to pass to `rag_tool`; also instructs multi-step
+  sub-question breakdown, explicit "doesn't cover this topic" fallback, and
+  a hard rule against naming methods/concepts not present in retrieved
+  context (groundedness guardrail).
 - Only `search_tool` is gated behind human approval — sole tool making an
-  external/untrusted network call. `calculator` and `rag_tool` are
-  deterministic/internal, no approval needed.
+  external/untrusted network call.
+
+## Streaming (implemented and verified this session)
+
+**Why it was needed**: the app previously used blocking `chatbot.invoke()`
+for every turn — no visible activity until the full answer was ready.
+Streaming was deliberately dropped early on when HITL/`interrupt()` was
+first added (to avoid two hard problems at once) and never re-added until
+now.
+
+**What was built**:
+1. `extract_stream_chunk_text(content)` — a per-chunk text extractor
+   (mirrors `extract_text()`, but joins fragments with `""` instead of `" "`,
+   since streamed chunks are partial word fragments, not whole blocks).
+2. `stream_chat_turn(user_input, config, accumulated_holder)` — a generator
+   fed into `st.write_stream()`. Iterates `chatbot.stream(..., stream_mode="messages")`,
+   filters to only `metadata['langgraph_node'] == "chat_node"` chunks
+   (discarding the guardrail's internal YES/NO check, which also streams),
+   and accumulates the full text into `accumulated_holder[0]` (a one-item
+   list, needed because a generator can't reassign an enclosing-scope
+   variable directly — mutating a list sidesteps that).
+3. After the stream loop ends, `chatbot.get_state(config)` is called and
+   `state.tasks` is checked for `task.interrupts` — the same pattern
+   `load_conversation()` already used. Interrupts never appear *inside* the
+   stream itself; they can only be detected by checking state afterward.
+4. **Scope decision (deliberate, unchanged)**: the Approve/Reject resume
+   path still uses plain `chatbot.invoke()`, not streamed. Reasonable
+   boundary — resumed responses are typically short.
+5. **Tool-status badge ("🔧 Using `tool_name`...") — deliberately NOT built.**
+   Flagged as a possible future follow-up, not part of current scope.
+
+**Verified in browser**: sent a 500-word test prompt, confirmed via a
+temporary debug print that text arrives in ~19 real chunks (~100–160 chars
+each, roughly sentence-sized) — genuine incremental streaming, just fast
+enough that it can look like a near-instant flash at full speed. Debug
+prints and an artificial `time.sleep()` used only for diagnosis were removed
+afterward. Also verified the interrupt path end-to-end: streaming a
+search-triggering query still correctly shows the Approve/Reject card after
+the stream ends.
+
+## PDF-replace confirmation (implemented and verified this session)
+
+**The question** (previously open): `_THREAD_RETRIEVERS[thread_id] = retriever`
+overwrites on each ingestion — uploading a second PDF to a thread silently
+replaces the first one's retriever. Investigated three options: (1) leave
+as-is and just document it, (2) leave the overwrite behavior but add an
+explicit UI confirmation before it happens, (3) support multiple PDFs per
+thread (significant new complexity — new retrieval logic, cache-key
+implications, UI to show multiple loaded docs).
+
+**Decision: option 2.** Rationale: option 1 leaves a rough edge that could
+look like a bug in a live interview demo; option 3 is real scope creep for
+a placement-prep timeline. Option 2 is a small, safe, easily-explained
+addition ("I noticed a silent-replace could confuse a user in a demo, so I
+added an explicit confirmation step") — genuinely strengthens the interview
+story rather than just excusing a limitation.
+
+**What was built**: a `session_state["confirm_pdf_replace"]` boolean flag.
+If no document is loaded yet for the current thread, "Process PDF" behaves
+exactly as before (no confirmation needed). If a document is already
+loaded and not yet confirmed, the first "Process PDF" click sets the flag
+and shows a warning ("This will replace the document currently loaded for
+this chat.") plus "Yes, replace it" / "Cancel" buttons — ingestion doesn't
+start until "Yes, replace it" is explicitly clicked. The actual
+ingestion-kickoff logic was pulled into one shared helper,
+`_start_pdf_ingestion()`, used by both the no-existing-doc path and the
+confirmed-replace path, to avoid duplicating those steps.
+
+**Verified in browser**: first upload processes with no warning; second
+upload to the same thread shows the warning; "Cancel" leaves the original
+document intact; "Yes, replace it" proceeds and successfully re-indexes.
+
+## Automated Tests (added this session)
+
+`pytest` installed and added to `requirements.txt` (unpinned). 15 tests
+across 3 files, all passing:
+
+- **`test_calculator.py`** (6 tests) — all four operations (add/sub/mul/div)
+  plus both explicit error paths (division by zero, unsupported operation).
+  Calls `calculator.invoke({...})` since it's a `@tool`-decorated function.
+- **`test_guardrail.py`** (4 tests) — tests `is_query_appropriate()`'s
+  YES/NO parsing logic in isolation, **mocking** `langgraph_backend.llm`
+  (patched where it's *used*, not where it's defined — a common mocking
+  gotcha) so no real API calls are made. Covers: uppercase YES → True,
+  NO → False, lowercase/mixed-case "yes, this is fine" → True, and a
+  list-of-content-blocks response shape (matching how Gemini sometimes
+  actually responds) → still parsed correctly.
+- **`test_rag_caching.py`** (5 tests) — tests `rag_tool`'s caching logic
+  by mocking `rag_utils.get_retriever_for_thread` to return a fake
+  retriever (no real PDF/embedding needed). Uses an `autouse=True` pytest
+  fixture to clear the module-level `_QUERY_CACHE` dict before/after each
+  test (since it's shared global state across tests). Covers: first call is
+  a cache miss, identical second call is a cache hit (retriever only
+  invoked once), cache key is case/whitespace-insensitive
+  (`query.strip().lower()`), different threads don't share a cache entry,
+  and `_clear_thread_cache(thread_id)` only clears that specific thread's
+  entries (the mechanism `ingest_pdf_for_thread()` calls internally on
+  re-ingestion).
+
+Running `pytest -v` (whole suite) confirmed no cross-file interference.
+Not currently wired into a pre-commit hook or CI — run manually before
+commits at Rohit's discretion.
+
+## Bug fixed this session: SSL certificate verification error
+
+**Symptom**: `duckduckgo_search` failed on every attempt with
+`ddgs.exceptions.DDGSException: ... [SSL: CERTIFICATE_VERIFY_FAILED] self-signed
+certificate in certificate chain`. This caused a *secondary* symptom that
+looked like an infinite loop: the system prompt instructs the model to
+rephrase and retry when a search doesn't return useful results, so it kept
+retrying (each retry re-triggering the Approve/Reject gate) since the
+search failed identically every time regardless of query rephrasing.
+
+**Root cause**: a well-known macOS Python issue — Python's bundled
+`certifi` CA bundle isn't linked to the system trust store by default,
+so any HTTPS request fails cert verification.
+
+**Fix**: ran `/Applications/Python\ 3.14/Install\ Certificates.command`
+(the official installer's bundled fix script), which upgrades `certifi`
+and re-links the certificate bundle. Verified fixed: a follow-up search +
+approve completed successfully (with 2–3 legitimate rephrase-and-retry
+cycles before landing on a real answer — confirmed as correct multi-step
+behavior per the system prompt, not a bug).
 
 ## Key Decisions & Why
-- **Local embeddings over OpenAI**: no per-call cost, strong interview talking point.
-- **Gemini free tier + `thinking_level="low"`**: budget constraint drove both choices.
-- **Per-thread RAG state kept in-memory** (`_THREAD_RETRIEVERS`/`_THREAD_METADATA`):
-  simple, per-conversation PDF isolation; known limitation — resets on app
-  restart/redeploy, accepted and documented rather than solved (would need a
-  persistent store for real multi-session durability).
-- **HITL gates only web search, not calculator/rag_tool**: same rationale
-  repeated in code comments — only tool touching an untrusted external source.
-- **Guardrails are prompt-based, not separate classifiers**: input guardrail
-  is one cheap LLM call short-circuiting to END; output groundedness is
-  system-prompt instruction, not a post-hoc verification step. Simpler to
+- **Local embeddings over OpenAI**: no per-call cost, strong interview
+  talking point.
+- **Gemini free tier + `thinking_level="low"`**: budget constraint.
+- **Per-thread RAG state kept in-memory**: simple, per-conversation PDF
+  isolation; resets on restart — accepted, documented limitation.
+- **HITL gates only web search**: sole tool touching an untrusted external
+  source; `calculator`/`rag_tool` are deterministic/internal.
+- **Guardrails are prompt-based, not separate classifiers**: simpler to
   build and explain than a dedicated groundedness model.
 - **Hybrid retrieval tuning (FAISS k=4, BM25 bm25_k=2, weights=[0.7,0.3])**:
-  `EnsembleRetriever` merges the *union* of both retrievers' results and only
-  re-ranks by weight — it does not drop candidates based on weight. Confirmed
-  by testing: identical result sets appeared under `weights=[0.5,0.5]` and
-  `weights=[0.8,0.2]` with equal per-retriever `k`; only order changed. The
-  actual fix for BM25 noise (this PDF's dense "Exercises" sections dominating
-  keyword search) was shrinking `bm25_k` independently, not reweighting.
-  **Re-verified locally (see Verification Log below) — still produces 2/6
-  exercise-list chunks for "What is supervised learning?", matching the
-  originally documented ratio exactly.**
-- **Caching only the retrieval step, not final LLM output** (`rag_tool`'s
-  `_QUERY_CACHE`): caching LLM responses raises staleness/correctness
-  questions (e.g. system prompt changes) disproportionate to benefit;
-  deliberately out of scope.
-- **`requirements.txt` hand-curated, not `pip freeze`**: direct dependencies
-  only, mostly unpinned except `ragas==0.3.9` (must stay pinned for the patch
-  below to keep applying cleanly).
-- **Async ingestion status is tracked per-thread_id, not per-browser-session**
-  (fixed today — see Bug 20 below): the background worker already keyed
-  `_INGESTION_STATUS` by thread_id correctly; the bug was that the Streamlit
-  UI was only *reading* that status while a single session-wide flag was
-  set, so navigating away lost visibility even though the job kept running
-  correctly in the background.
+  `EnsembleRetriever` merges the *union* and re-ranks by weight — doesn't
+  drop candidates. The actual fix for BM25 noise was shrinking `bm25_k` at
+  the source, not reweighting.
+- **Caching only retrieval, not final LLM output**: avoids staleness
+  questions disproportionate to benefit.
+- **Single-PDF-per-thread, with explicit replace confirmation** (decided
+  this session): pragmatic scope boundary for a placement-prep timeline;
+  documented and defensible in an interview, and now has a small UX
+  safeguard so it can't look like a bug in a live demo.
+- **Streaming: chat turns streamed, resume path not streamed** (decided
+  this session): explicit, explainable scope boundary — not an oversight.
+- **Weather/stock/other new RAG tools — explicitly deferred, not planned
+  soon.** Discussed and deliberately declined for now: doesn't strengthen
+  the *RAG* story (it's tool-calling, not retrieval-augmented generation),
+  adds real scope (API keys, HITL-gating for the new external call,
+  prompt-engineering for tool selection), and README/resume/deployment
+  matter more for interview-readiness than tool breadth. Revisit only if
+  time remains after the current priority list is fully done.
+- **No git commits between individual work steps** — Rohit's explicit
+  instruction: batch changes locally and only commit/push around
+  deployment time, not after every small item.
 
-## Bugs Fixed (cumulative)
-1. `message`/`messages` key typo in early `ChatState`.
-2. Tools referenced before definition (Python top-to-bottom execution order).
-3. `duckduckgo-search` → `ddgs` package rename.
-4. Broken Unicode surrogates breaking the embedding tokenizer — fixed via
-   `re.sub(r'[\ud800-\udfff]', '', text)` in `rag_utils.clean_text()`.
-5. Gemini model deprecations — settled on `gemini-3.5-flash-lite`.
-6. Free-tier quota exhaustion (429) on a heavier model — switched down.
-7. `ragas` import crash — see manual patch section below.
-8. HITL: LLM retried rejected tool calls as if the search had merely failed —
-   fixed by making the denial `ToolMessage` explicit ("do not retry this tool
-   or attempt a similar search"), and by looping over interrupts in both the
-   terminal `__main__` test and the Streamlit handler instead of assuming
-   exactly one interrupt per turn.
-9. Streamlit thread-switch staleness — sidebar thread buttons updated
-   `session_state` but didn't call `st.rerun()`; fixed.
-10. Debug print flooding terminal — removed a stray print from the result handler.
-11. Leftover temp PDF files never deleted — added `os.remove()` cleanup for
-    both sync and async ingestion paths, plus (at the time) `clear_stale_ingestion()`
-    for the case where the user navigates away mid-ingestion (superseded by
-    Bug 20's fix, see below).
-12. Duplicate dead code in `__main__`'s final-answer print logic — removed.
-13. Leaked API key caught before real damage — key rotated, `.env` untracked
-    via `git rm --cached -f`.
-14. `.idea/` and a 58MB `test.pdf` committed despite `.gitignore` — removed
-    via `git rm --cached` after the fact.
-15. RAGAS faithfulness anomaly (0.27) — root cause was the model naming
-    methods/concepts not present in retrieved context (e.g. naming
-    Ridge/Elastic Net when only Lasso was retrieved). Fixed via k=4→6
-    retrieval (later superseded by hybrid tuning) + a tightened system
-    prompt forbidding unretrieved terms. Separately fixed a RAGAS/Gemini
-    incompatibility (no multi-candidate generation support) via
-    `AnswerRelevancy(strictness=1)`.
-16. `ingest_pdf_for_thread` broke after `get_retriever`'s signature changed to
-    require a `chunks` param (for BM25) — updated the call site.
-17. `ModuleNotFoundError: langchain.retrievers` — `EnsembleRetriever` moved to
-    the new `langchain-classic` package in LangChain v1.0. Fixed via
-    `pip install langchain-classic` + import path change. `BM25Retriever`
-    stayed in `langchain_community.retrievers`, unaffected.
-18. Async PDF ingestion status ambiguity on the deployed app — investigated
-    (see Bug 20, this was the actual root cause, found and fixed this session).
-19. LangSmith tracing, LLM-swap abstraction, caching, and async ingestion all
-    worked cleanly on first implementation (not bugs, noted for completeness).
-    A one-time git staging quirk occurred (PyCharm auto-staged a throwaway
-    `test_cache.py` verification script before it was deleted) — resolved
-    with `git restore --staged` before the real commit; no code issue involved.
-20. **Async ingestion progress lost on thread switch — found and fixed this
-    session.** Root cause: `streamlit_frontend.py` tracked "should I poll for
-    ingestion progress" using a single session-wide flag,
-    `st.session_state["ingesting_temp_path"]` (one string, not scoped per
-    thread). Clicking "New Chat" or switching to a different sidebar thread
-    called `clear_stale_ingestion()`, which deleted that flag unconditionally
-    — even if the ingestion job for the *original* thread was still running
-    correctly in the background. Once the flag was gone, the UI never polled
-    `get_ingestion_status()` for that thread again, so the user saw no
-    progress at all when navigating back — just a sudden "Document loaded"
-    once the job happened to finish, with no visible progress in between.
-    **Confirmed via manual testing** that the background thread itself was
-    *not* actually broken — `PyPDFLoader` reads the whole PDF into memory
-    near-immediately, before the slow embedding step, so deleting the temp
-    file a few seconds later (when the user clicks away) doesn't crash the
-    worker; ingestion completes correctly regardless. The bug was pure lost
-    UI visibility, not data loss or a failed job.
-    **Fix applied**: replaced the single flag with a per-thread dict,
-    `st.session_state["ingesting_temp_paths"]` (`{thread_id: temp_path}`).
-    Renamed `clear_stale_ingestion()` → `cleanup_finished_ingestions()`,
-    which now loops over all tracked threads and only deletes a temp file /
-    stops tracking a thread once `get_ingestion_status(thread_id)` confirms
-    that thread's job is actually `"done"` or `"error"` — never based on
-    navigation alone. The sidebar's status display now calls
-    `get_ingestion_status(current_thread_id)` directly on every rerun,
-    independent of any session flag, so it correctly shows live "⏳ stage..."
-    messages even after navigating away and back mid-ingestion.
-    Also fixed in the same pass: temp filenames now include `thread_id`
-    (`temp_{thread_id}_{filename}`) to prevent two threads uploading a
-    same-named PDF from colliding on the same temp file path.
-    **Verified working**: manually tested the exact repro (upload PDF →
-    click Process PDF → click New Chat mid-ingestion → click back into the
-    original thread) — live "⏳" progress messages now correctly continue
-    displaying after navigating back, instead of showing nothing until a
-    sudden "done."
+## Bugs Fixed (cumulative, latest first)
+21. **SSL certificate verification error blocking `duckduckgo_search`** —
+    see "Bug fixed this session" above. Fixed via
+    `Install Certificates.command`.
+20. Async ingestion progress lost on thread switch — root cause was a
+    single session-wide flag instead of a per-thread dict; fixed with
+    `st.session_state["ingesting_temp_paths"]` (per-thread) and
+    `cleanup_finished_ingestions()` (only cleans up threads whose job is
+    actually done/errored, never based on navigation alone). Verified via
+    exact repro test.
+19. LangSmith tracing, LLM-swap, caching, async ingestion all worked
+    cleanly on first implementation. One git staging quirk (PyCharm
+    auto-staged a throwaway `test_cache.py` before deletion) — resolved.
+18–1. See prior sessions: message/messages typo, tool-definition-order bug,
+    `duckduckgo-search`→`ddgs` rename, Unicode surrogate crash in
+    embeddings, Gemini model deprecations, free-tier 429s, `ragas` import
+    crash (patch below), HITL retry-after-reject bug, Streamlit rerun
+    staleness, debug print flood, leftover temp files, dead code, leaked
+    API key (rotated), oversized `test.pdf` accidentally committed
+    (removed via `git rm --cached`), RAGAS faithfulness anomaly (0.27,
+    traced to ungrounded term naming), `ingest_pdf_for_thread` signature
+    mismatch, `EnsembleRetriever` moved to `langchain-classic` in
+    LangChain v1.0.
 
 ## Manual patch required after any fresh venv rebuild
 `ragas==0.3.9` unconditionally imports `langchain_community.chat_models.vertexai`,
-a module path that no longer exists in current `langchain-community`. Breaks
-any script importing `ragas` (i.e. `evaluation.py`) with:
-```
-ModuleNotFoundError: No module named 'langchain_community.chat_models.vertexai'
-```
-**This is a manual edit to an installed package — `requirements.txt` cannot
-capture it. Must be reapplied after every fresh `pip install`.**
+which no longer exists in current `langchain-community`. Breaks any script
+importing `ragas` (i.e. `evaluation.py`) with a `ModuleNotFoundError`.
 
-File to patch: `.venv/lib/python3.14/site-packages/ragas/llms/base.py`
-Fix: wrap the `ChatVertexAI`/`VertexAI` imports in try/except, falling back to
-`langchain_google_vertexai` (already a pinned dependency), and filter `None`
-out of `MULTIPLE_COMPLETION_SUPPORTED` so downstream `isinstance()` checks
-don't break.
-
-After patching, clear `ragas`'s `__pycache__` (a stale `.pyc` can mask the fix):
+File to patch: `.venv/lib/python3.14/site-packages/ragas/llms/base.py` —
+wrap the `ChatVertexAI`/`VertexAI` imports in try/except, fall back to
+`langchain_google_vertexai`, filter `None` out of
+`MULTIPLE_COMPLETION_SUPPORTED`. Clear `ragas`'s `__pycache__` after
+patching (stale `.pyc` can mask the fix):
 ```
 find .venv -path "*/ragas/**/__pycache__" -exec rm -rf {} +
 ```
+**This is a manual edit to an installed package — cannot be captured in
+`requirements.txt`. Must be reapplied after every fresh `pip install`.**
 
-## RAGAS Baselines (for comparison across experiments)
-
-**Pre-hybrid-search baseline** (k=6, FAISS-only, tightened prompt, strictness=1):
-```
-faithfulness: 0.9583
-answer_relevancy: 0.8203
-context_precision: 0.5111
-```
-
-**Hybrid search, `weights=[0.5,0.5]`, `k=4` both retrievers** (regressed —
-root-caused to BM25 noise):
-```
-faithfulness: 0.8561
-answer_relevancy: 0.7598
-context_precision: 0.3921
-```
-
-**Hybrid search, `weights=[0.8,0.2]`, `k=4` both retrievers**: same scores as
-above (confirmed — weighting alone doesn't change the candidate set, only order).
-
+## RAGAS Baselines
 **Hybrid search, `bm25_k=2`, `weights=[0.7,0.3]` (FINAL, accepted config)**:
 ```
-Run 1 (right after bm25_k fix):
-  faithfulness: 0.8333  [per-question: 1.0, 1.0, 0.5 — low score traced to
-                          RAGAS judge noise on n=3, manually verified all
-                          claims in flagged answer were faithful to context]
-  answer_relevancy: 0.8116
-  context_precision: 0.5278  (BEATS pre-hybrid baseline of 0.5111)
-Run 2 (after LLM-swap refactor, sanity-check re-run):
-  faithfulness: 0.9333
-  answer_relevancy: 0.8756
-  context_precision: 0.5278  (identical — confirms retrieval untouched)
+Run 1: faithfulness 0.8333, answer_relevancy 0.8116, context_precision 0.5278
+Run 2: faithfulness 0.9333, answer_relevancy 0.8756, context_precision 0.5278
 ```
-Conclusion: context_precision is stable/reproducible at 0.5278 across
-runs (retrieval logic is deterministic). faithfulness/answer_relevancy
-vary run-to-run due to RAGAS judge noise on a small n=3 eval set — confirmed
-by two independent re-runs, not just one investigation.
-
-## Verification Log — local re-verification pass (this session)
-
-All 5 documented stretch features were re-tested locally, one at a time, to
-confirm nothing regressed and to investigate the previously-unresolved
-async-ingestion question. Results:
-
-1. **Async PDF ingestion** — found and fixed a real bug (Bug 20 above).
-   Re-tested after the fix: confirmed live progress now survives switching
-   threads or clicking "New Chat" mid-ingestion. ✅
-2. **Hybrid search** — ran `python rag_utils.py` (its own `__main__` block).
-   2,339 chunks from `test.pdf`. Query "What is supervised learning?"
-   returned 6 results: 4 genuine explanatory chunks, 2 exercise-list chunks
-   — exactly the documented 2/6 ratio from the original `bm25_k=2` tuning
-   work. No regression. ✅
-3. **LangSmith tracing** — sent a live chat message locally, confirmed a new
-   trace appeared in the `rag-chatbot` LangSmith dashboard project under the
-   run name `streamlit_chat_turn`. Also incidentally confirmed multiple other
-   trace types are healthy: `hitl_smoke_test`, `ragas evaluation`,
-   `EnsembleRetriever` (nested retriever spans), `LangGraph` (parent runs).
-   One observation, not a bug: a plain "hello" message showed 17.67s latency
-   in one trace vs. ~4-5.5s for real RAG turns — likely a Gemini free-tier
-   cold-start/rate-limit blip, not investigated further, worth being aware
-   of if it comes up in a live demo. ✅
-4. **LLM-swap abstraction** — tested via
-   `LLM_MODEL=gemini-2.5-flash python langgraph_backend.py`. This produced a
-   `404 NOT_FOUND` error from Google's API, but the error message explicitly
-   named `gemini-2.5-flash` as the model it tried to call — which **proves**
-   the env-var override correctly reached the real API call. The failure
-   itself is external: Google has fully retired `gemini-2.5-flash`
-   ("no longer available to new users... use models/gemini-3.6-flash").
-   Re-ran with no override afterward (`python langgraph_backend.py` plain) —
-   confirmed the default (`gemini-3.5-flash-lite`) still works, full HITL
-   reject flow completed correctly. Both the override path and the fallback
-   path are verified working. ✅
-5. **In-memory query caching** — standalone script (`test_cache.py`,
-   deleted after use) called `rag_tool` twice with the same
-   `(thread_id, query)`. First call: `cache_hit: False`, 0.0348s. Second
-   call: `cache_hit: True`, 0.0002s. **166.6x speedup** — consistent with
-   the originally documented ~140x figure (minor run-to-run timing variance
-   expected, not a discrepancy). ✅
-
-**Conclusion: all 5 stretch features confirmed working correctly, matching
-documented behavior. One real bug found and fixed (async ingestion progress
-tracking). No other regressions found.**
-
-## Streaming investigation (this session — diagnostic only, not yet implemented)
-
-Per an earlier session's note, token streaming (`chatbot.stream()`) was
-deliberately dropped when HITL/`interrupt()` was first added, to avoid
-tackling two hard problems at once. It was never re-added. This was
-identified this session as the one genuine, previously-flagged gap between
-the current app and a more polished version of it (confirmed not present
-anywhere else by cross-checking against course-reference files — see below).
-
-**Diagnostic work done (via a throwaway `test_streaming.py`, since deleted)**:
-1. Ran `chatbot.stream(..., stream_mode="messages")` on a query that
-   triggers a `duckduckgo_search` tool call (and therefore an interrupt).
-   Confirmed:
-   - The **guardrail's internal YES/NO check leaks into the raw stream** —
-     `is_query_appropriate()`'s `llm.invoke(check_prompt)` call produces its
-     own streamed chunks (e.g. `content=[{'type': 'text', 'text': 'YES', ...}]`)
-     that must be filtered out before reaching the user.
-   - **`metadata['langgraph_node']` reliably distinguishes** `"guardrail_node"`
-     vs `"chat_node"` chunks — confirmed via a second test run printing
-     `metadata.get('langgraph_node')` per chunk. This gives a clean filter:
-     only stream chunks where `metadata['langgraph_node'] == "chat_node"`.
-   - **Gemini streams `content` as a list of dicts**, not a plain string —
-     e.g. `[{'type': 'text', 'text': '...', 'index': 0}]`, sometimes with an
-     `'extras': {'signature': '...'}` block (internal "thinking" trace
-     metadata, must be ignored/not displayed). The existing `extract_text()`
-     helper in `streamlit_frontend.py` already handles this shape for
-     non-streaming responses; the same logic needs a per-chunk version.
-   - **The stream does not announce an interrupt** — it simply stops
-     yielding once the graph pauses at `human_review_node`. The only
-     reliable way to detect a pending interrupt after streaming is to call
-     `chatbot.get_state(config)` afterward and check `state.tasks` for
-     `task.interrupts` — the same pattern `load_conversation()` already
-     uses elsewhere in the app.
-
-**Implementation plan (agreed, not yet applied to `streamlit_frontend.py`)**:
-1. Add an `extract_stream_chunk_text(content)` helper (list-of-dicts →
-   joined text, mirrors `extract_text()`).
-2. Replace the plain-chat-turn branch's `chatbot.invoke()` call with a
-   generator function fed into `st.write_stream()`, filtering chunks to only
-   `metadata['langgraph_node'] == "chat_node"` and yielding extracted text.
-3. After the stream loop ends, call `chatbot.get_state(config)` and check
-   for a pending interrupt exactly as above; set
-   `st.session_state["pending_interrupt"]` if found, else append the
-   accumulated streamed text to `message_history` as normal.
-4. **Scope decision**: leave the Approve/Reject resume path
-   (`chatbot.invoke(Command(resume=...), config=CONFIG)`) as plain
-   `.invoke()` for now, not streamed — the resumed response is typically
-   short, and mixing a streamed first-turn with a non-streamed resume is a
-   reasonable, explainable scope boundary. Can revisit later for full
-   consistency.
-5. Tool-status badge (the "🔧 Using `tool_name`..." indicator, sourced from
-   a reference tutorial pattern) — planned as a follow-up addition after
-   plain text streaming is confirmed working in the browser, not bundled
-   into the same pass, to keep changes small and independently testable.
-
-**Not yet done**: none of the above has been applied to the real
-`streamlit_frontend.py` yet — this is purely the diagnostic + design phase,
-ready to implement next session.
-
-## Reference material clarification (not part of this project)
-Files like `langgraph_mcp_backend.py`, `streamlit_frontend_mcp.py`,
-`langgraph_tool_backend.py`, `streamlit_frontend_tool.py`,
-`langgraph_database_backend.py`, `streamlit_frontend_database.py`,
-`streamlit_frontend_threading.py`, `streamlit_frontend_streaming.py`,
-`langraph_rag_backend.py`, `streamlit_rag_frontend.py` are **not part of this
-project** — they're course/tutorial reference files from a YouTube
-tutor (Nitish), used only as a comparison point to check for missing
-features. Confirmed via a hardcoded path in one of them
-(`/Users/nitish/Desktop/mcp-math-server/main.py` — not Rohit's username/path).
-Cross-checking against them surfaced the streaming/tool-status-badge gap
-above; nothing else in them applies to this project (MCP integration, raw
-tool-calling patterns, and DB-backend variants are already superseded by
-this project's more advanced HITL + RAG + hybrid-search implementation).
+`context_precision` is stable/reproducible at 0.5278 across runs (retrieval
+is deterministic). `faithfulness`/`answer_relevancy` vary run-to-run due to
+RAGAS judge noise on a small n=3 eval set — confirmed by two independent
+re-runs. (Full historical baselines, including pre-hybrid and the
+`bm25_k` tuning investigation, are in earlier session logs if needed.)
 
 ## Git / Repo Hygiene
-- Confirmed current GitHub repo contents (checked via screenshot this
-  session) match the real project file list exactly: `.gitignore`,
+- **This session's commit**: `8e1d828` — "Add token streaming, pytest
+  suite, PDF-replace confirmation, cleanup" (10 files: `.gitignore`,
   `PROJECT_NOTES.md`, `evaluation.py`, `langgraph_backend.py`,
-  `llm_config.py`, `rag_utils.py`, `requirements.txt`, `streamlit_frontend.py`,
-  plus a `.devcontainer` folder (added separately, "Added Dev Container
-  Folder" commit). No stray/leftover files, no missing files. 10 commits so
-  far as of last check.
-- Nine commits (roughly, per earlier session's log — recount before next
-  push):
-  1. Initial commit: RAG chatbot with LangGraph, HITL, RAGAS eval
-  2. Remove `.idea/` from tracking
-  3. `d306ba3` — Add hybrid search (FAISS + BM25), tune RAGAS eval, tighten
-     groundedness prompt
-  4. `6dc05de` — Add LangSmith tracing: run names and thread_id metadata
-  5. `fe0d7e5` — Update PROJECT_NOTES.md (hybrid search + tracing complete)
-  6. `bb7f3ba` — Add LLM-swap abstraction via llm_config.py
-  7. `8cc68b8` — Add in-memory query caching to rag_tool
-  8. `aaa5e32` — Add async PDF ingestion with live progress feedback
-  9. `9212dd5` — Added Dev Container Folder
-  10. **Not yet committed**: today's async-ingestion thread-switch fix
-      (Bug 20) — still only local, needs to be pushed. This is the next real
-      commit to make.
+  `rag_utils.py`, `requirements.txt`, `streamlit_frontend.py`, plus 3 new
+  test files).
+- **Merge commit**: `159c6e7` — merged in a remote-only commit
+  (`9212dd5`, "Added Dev Container Folder") that existed on GitHub but not
+  in the local clone. No conflicts (unrelated `.devcontainer` file).
+- **Pushed successfully**: `9212dd5..159c6e7 main -> main`. Repo is fully
+  synced as of end of this session.
+- **Staging quirk resolved this session**: `test_cache.py` and
+  `test_streaming.py` (throwaway diagnostic scripts) had been auto-staged
+  by PyCharm as "new files" despite being deleted from disk. Fixed via
+  `git rm --cached test_cache.py test_streaming.py` before committing —
+  neither file is tracked or present anymore.
+- **`.gitignore` bug fixed this session**: the entry `PROJECT KNOWLEDGE`
+  (no extension) didn't actually match the real file
+  `PROJECT KNOWLEDGE.txt`, so it was showing as untracked instead of
+  ignored. Fixed by changing the pattern to `PROJECT KNOWLEDGE*`.
+- Also cleaned up this session: a stray duplicate file,
+  `PROJECT_NOTES (1).md`, deleted (was an accidental "Save As" duplicate).
+- **Convention (explicit, from Rohit)**: no git commits/pushes between
+  individual work items going forward — batch locally, commit/push around
+  deployment time only. (This session's commit was an exception Rohit
+  explicitly requested due to running low on time/tokens.)
 - `.gitignore` covers: `.venv/`, `.env`, `__pycache__/`, `*.pyc`, `*.db`,
-  `*.db-shm`, `*.db-wal`, `temp_*.pdf`, `evaluation_results.json`, `test.pdf`,
-  `.idea/`, `.DS_Store`, `requirements_current.txt`, `.agents/`, `.claude/`,
-  `PROJECT KNOWLEDGE` (chat-session-attachment doc, not source)
-- Git identity set to real name/email
-- API key was rotated after being pasted in a chat session — treat any key
-  visible outside `.env` as compromised going forward
-- `requirements.txt` confirmed complete: includes `langchain-classic` and
-  `rank_bm25` (both verified installed via `pip show` before adding)
-- **Reminder pattern**: this session used two throwaway verification
-  scripts, `test_cache.py` and `test_streaming.py`, both deleted after use.
-  Confirm via `git status` before the next commit that neither got
-  auto-staged by PyCharm (same quirk as a previous session).
+  `*.db-shm`, `*.db-wal`, `temp_*.pdf`, `evaluation_results.json`,
+  `test.pdf`, `.idea/`, `.DS_Store`, `requirements_current.txt`,
+  `.agents/`, `.claude/`, `PROJECT KNOWLEDGE*`.
 
-## Open Issues / Not Yet Started
+## Open Issues / Priority List
 
-**Final priority list, in order (deployment deliberately last per Rohit's
-instruction)**:
-
-1. **Streaming + live tool-status badge — IN PROGRESS.** Diagnostic phase
-   complete (see "Streaming investigation" above), full implementation plan
-   agreed, not yet applied to `streamlit_frontend.py`. Next session should
-   start here: add the `extract_stream_chunk_text()` helper first, then the
-   streaming generator, then the post-stream interrupt check, test in
-   browser, then add the tool-status badge as a separate follow-up step.
-2. **Automated tests (pytest)** — not started. Planned scope: `rag_tool`
-   caching logic (cache hit/miss, cache invalidation on re-ingestion),
-   `is_query_appropriate()`'s YES/NO parsing, possibly the `calculator` tool.
-3. **Single-PDF-per-thread behavior — investigate and decide.**
-   `_THREAD_RETRIEVERS[thread_id] = retriever` overwrites on each
-   ingestion — uploading a second PDF to the same thread silently replaces
-   the first one's retriever rather than adding to it. Not yet determined
-   whether this should be treated as an intentional design decision (simpler,
-   "one document per conversation," easy to document and defend) or
-   changed to support multiple documents per thread. Decide and either fix
-   or explicitly document the reasoning.
-4. **README.md for the GitHub repo** — doesn't exist yet.
+1. ~~Streaming + tool-status badge~~ — **streaming DONE this session,
+   verified.** Tool-status badge deliberately not built (optional future
+   idea, not current scope).
+2. ~~Automated tests (pytest)~~ — **DONE this session**, 15 tests passing.
+3. ~~Single-PDF-per-thread behavior~~ — **DONE this session**, decided
+   (option 2: confirm-before-replace) and implemented/verified.
+4. **README.md for the GitHub repo — NEXT.** Not started. Still need to
+   decide: audience (recruiter-skim vs. technical-detailed vs. both in
+   sections) and format (draft in chat first vs. paste-ready `.md`
+   directly).
 5. **Resume/portfolio writeup** — not started.
-6. **Cosmetic cleanup** — remove the unused `tools_condition` import in
-   `langgraph_backend.py` (harmless, noted during file review, trivial fix,
-   can be folded into any future commit).
-7. **Deployment (Days 19–20) — deliberately last.** Push all pending local
-   changes (the Bug 20 async-ingestion fix is the main one) to GitHub,
-   redeploy to Streamlit Cloud, then re-verify all 5 stretch features on the
-   *live* deployed app the same way they were just verified locally this
-   session (the local verification pass was a stand-in/prerequisite for
-   this, not a replacement).
+6. ~~Cosmetic cleanup~~ — **DONE this session** (removed unused
+   `tools_condition` import from `langgraph_backend.py`).
+7. **Deployment (Days 19–20) — deliberately last.** Redeploy to Streamlit
+   Cloud with all of today's changes (now pushed to GitHub), then
+   re-verify all 5 stretch features + streaming + the new PDF-replace
+   confirmation on the live deployed app.
 
-**Deliberately deferred, not gaps** (unchanged from earlier sessions):
-semantic chunking, multi-user auth, cost/quota routing — lower interview
-value / high effort relative to time left. Documented as an intentional
-scope decision if asked in interviews.
+**Explicitly deferred, not gaps**: semantic chunking, multi-user auth,
+cost/quota routing, multi-PDF-per-thread support, and new tool integrations
+(weather/stocks/etc.) — all discussed and deliberately scoped out as lower
+interview value / high effort relative to time left. Documented as
+intentional scope decisions, defensible if asked in interviews.
 
 ## Conventions / Rules to Follow
-- User is new to practical implementation and wants every step spelled out
+- Rohit is new to practical implementation — spell out every step
   explicitly: exact terminal commands, exact PyCharm click-paths, one step
-  at a time, waiting for "done" before proceeding to the next step. Don't
-  assume familiarity with IDE shortcuts or terminal basics.
-- Explain *what* each piece of code does and *why*, in small incremental
-  steps, not large code dumps.
-- User pastes/edits code themselves after explanation; debugging is
-  collaborative — read actual tracebacks/output together, don't guess.
+  at a time, wait for "done" before proceeding. Don't assume familiarity
+  with IDE shortcuts, terminal basics, or tools like `vim` (walk through
+  save/exit explicitly if a text editor opens unexpectedly, e.g. during a
+  git merge).
+- Explain *what* and *why* for every code change, in small increments —
+  not large code dumps.
+- Rohit pastes/edits code himself in PyCharm; debugging is collaborative —
+  read actual tracebacks/output together, don't guess. When something looks
+  like a bug, add a small temporary diagnostic (debug print, etc.) to
+  confirm root cause before proposing a fix, then remove the diagnostic
+  once confirmed.
 - Prefer free/local solutions given budget constraints.
 - Keep `requirements.txt` in sync with every new dependency; hand-curate,
-  verify packages are actually installed via `pip show` before adding lines.
-- Streamlit apps run via `streamlit run <file>` in terminal — never PyCharm's
-  Run button.
-- Claude has no direct filesystem access to the user's Mac — all file edits
-  are given as exact paste-able content for the user to apply themselves in
-  PyCharm; user confirms with "done" after each edit before proceeding.
-- Verify claims manually (claim-by-claim, reading actual output/context)
-  rather than accepting aggregate scores or theories at face value — this
-  pattern has repeatedly caught real issues (RAGAS faithfulness
-  investigation, the EnsembleRetriever weight-vs-k misunderstanding, the
-  async-ingestion thread-switch bug this session).
-- Before committing, check `git status`/`git diff` per modified file rather
-  than assuming only intended files changed.
-- Given the 20-day placement-prep timeline, favor pragmatic/simple
-  implementations defensible in an interview over premature complexity.
-- **User is ahead of the original 20-day deadline and is now doing optional
-  polish work** (streaming, tests, README, etc.) — these are bonus items,
-  not catching up on missed scope. All 5 originally-planned stretch features
-  were genuinely complete before this session began.
-- When told to proceed through a batch of items "one by one" or "all of the
-  above," do not stop to ask which one's next between items — proceed
-  through the full sequence, only pausing for "done" confirmation on
-  individual edits, not for direction-choosing between items.
-- **Final priority list is fixed and user will say "next" to advance through
-  it** — Claude should follow the list in "Open Issues" above in order,
-  without re-asking which item is next, when the user says "next."
-- Project knowledge / attached snapshot docs can go stale — always
-  cross-check against the actual pasted/current file contents rather than
-  trusting an attached summary at face value. This includes distinguishing
-  Rohit's real project files from unrelated reference/tutorial files that
-  may appear in the same context (see "Reference material clarification"
-  above).
+  verify via `pip show` before adding.
+- Streamlit apps run via `streamlit run <file>` in terminal — never
+  PyCharm's Run button.
+- Claude has no filesystem access to Rohit's Mac — all edits given as
+  exact paste-able content; Rohit confirms "done" after each edit.
+- Verify claims manually (claim-by-claim, real output/context) rather than
+  accepting aggregate scores/theories at face value.
+- Check `git status`/`git diff` per modified file before committing —
+  never assume only intended files changed. If something unexpected shows
+  up (e.g. an unexplained modified file), investigate the actual diff
+  before including it in a commit.
+- **No git commits/pushes between individual work items** — batch locally,
+  only commit/push around deployment time (see Git section above).
+- When told to proceed through a batch "one by one" or "all of the above,"
+  don't stop to ask which one's next between items — proceed through the
+  full sequence, only pausing for "done" confirmation on individual edits.
+- **Final priority list is fixed; Rohit says "next" to advance through
+  it** — follow the "Open Issues" list above in order without re-asking.
+- **Be honest and conservative about scope, especially anything Rohit
+  needs to be able to defend in an interview.** Rohit has explicitly said
+  he doesn't want to add anything "hyped" or that he can't fully explain
+  if asked — when proposing a new feature (e.g. PDF-replace confirmation,
+  new tools), explicitly weigh interview-defensibility, not just technical
+  interest. When in doubt, favor the smaller/simpler/more explainable
+  option.
+- Throwaway diagnostic/test scripts (e.g. `test_cache.py`,
+  `test_streaming.py`) should be deleted after use, and `git status`
+  checked before the next commit to catch any accidental auto-staging by
+  PyCharm (a recurring quirk).
+- Project knowledge / attached snapshot docs can go stale — cross-check
+  against actual pasted/current file contents rather than trusting an
+  attached summary at face value.
 
 ## Continue from here
-All 5 originally-planned stretch features (hybrid search, LangSmith tracing,
-LLM-swap abstraction, query caching, async ingestion) are complete,
-committed, and were re-verified locally this session — including finding
-and fixing a real bug in async ingestion's thread-switch handling (Bug 20).
+Items 1, 2, 3, and 6 of the priority list are now done and verified this
+session (streaming, automated tests, single-PDF-per-thread decision,
+cosmetic cleanup). Today's work is committed (`8e1d828`) and pushed to
+GitHub, including a clean merge of an out-of-sync remote commit
+(`159c6e7`). The SSL certificate bug (a real, previously-undiagnosed issue
+blocking all web search) was also found and fixed this session.
 
-Rohit is ahead of his original deadline and is now working through an
-**optional bonus priority list** (see "Open Issues" above), in order,
-advancing one item at a time via "next." **Next session should resume
-directly at item 1: implementing token streaming in `streamlit_frontend.py`**
-— the diagnostic work and full implementation plan are already done (see
-"Streaming investigation" above), so this should move straight to applying
-the actual code changes, step by step, starting with the
-`extract_stream_chunk_text()` helper.
+**Next session should resume at item 4: README.md.** Two open questions
+to resolve first: (1) should it target recruiters (concise, feature
+highlights) or be more technical (architecture, setup instructions), or
+both in sections; (2) does Rohit want a draft reviewed in chat first, or
+a paste-ready `.md` file directly. After README, move to item 5 (resume/
+portfolio writeup), then item 7 (deployment) — per Rohit's standing
+instruction, no further git commits until deployment time.
 
-Local `streamlit_frontend.py` and `rag_utils.py` currently have the Bug 20
-fix applied and tested, but **not yet pushed to GitHub or redeployed** —
-this stays queued for the deployment phase (list item 7), per Rohit's
-explicit instruction to do all deployment-related work last.
-```
-
-That's the complete file, written from the top — not a patch. Paste it in over your existing `PROJECT_NOTES.md`, save, and it'll carry full context (today's bug fix, verification results, streaming diagnostic findings, and the exact priority list) into any future session without you re-explaining anything.
+Rohit was explicit this session that new RAG tools (weather, stocks, etc.)
+are **not** wanted right now — flagged as a possible "if time remains
+after everything else" idea, not part of the active priority list. Don't
+propose adding new tools again unless Rohit brings it up.

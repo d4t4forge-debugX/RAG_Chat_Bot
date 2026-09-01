@@ -8,7 +8,7 @@ import sqlite3
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.tools import tool
 from langchain_community.tools import DuckDuckGoSearchRun
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
 from rag_utils import rag_tool, ingest_pdf_for_thread
 from langchain_core.messages import ToolMessage
 from langchain_core.messages import SystemMessage
@@ -65,10 +65,9 @@ def is_query_appropriate(query: str) -> bool:
         )
     return "yes" in answer.lower()
 
-search_tool = DuckDuckGoSearchRun(region="us-en")
-
-# ---- LLM setup AFTER tools exist ----
 llm = get_llm()
+
+search_tool = DuckDuckGoSearchRun(region="us-en")
 
 tools = [search_tool, calculator, rag_tool]
 llm_with_tools = llm.bind_tools(tools)
@@ -78,6 +77,7 @@ checkpointer = SqliteSaver(conn=conn)
 
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
+    blocked: bool
 
 
 def guardrail_node(state: ChatState):
@@ -96,10 +96,9 @@ def guardrail_node(state: ChatState):
             refusal = AIMessage(
                 content="I'm not able to help with that request. Please ask a different question."
             )
-            return {"messages": [refusal]}
+            return {"messages": [refusal], "blocked": True}
 
-    return {"messages": []}
-
+    return {"messages": [], "blocked": False}
 
 def chat_node(state: ChatState, config=None):
     messages = state["messages"]
@@ -170,8 +169,7 @@ def route_after_chat(state: ChatState):
     return "tools"
 
 def route_after_guardrail(state: ChatState):
-    last_message = state["messages"][-1]
-    if isinstance(last_message, AIMessage) and "not able to help" in str(last_message.content):
+    if state.get("blocked"):
         return END
     return "chat_node"
 

@@ -1,3 +1,18 @@
+import json
+import uuid
+
+from langchain_core.messages import HumanMessage
+from ragas import evaluate, EvaluationDataset
+from ragas.embeddings import LangchainEmbeddingsWrapper
+from ragas.llms import LangchainLLMWrapper
+from ragas.metrics import Faithfulness, AnswerRelevancy, LLMContextPrecisionWithReference
+from ragas.run_config import RunConfig
+
+from langgraph_backend import chatbot, llm
+from rag_utils import get_retriever_for_thread, ingest_pdf_for_thread
+from rag_utils import embeddings as rag_embeddings
+
+
 test_questions = [
     {
         "question": "What is supervised learning?",
@@ -12,13 +27,6 @@ test_questions = [
         "ground_truth": "Regularization is used to reduce overfitting by constraining a model, typically by reducing the degrees of freedom it has."
     },
 ]
-
-# ---- paste the new code below this line ----
-
-from langgraph_backend import chatbot
-from langchain_core.messages import HumanMessage
-from rag_utils import get_retriever_for_thread
-import uuid
 
 
 def run_evaluation(thread_id: str):
@@ -56,13 +64,7 @@ def run_evaluation(thread_id: str):
         print()
 
     return results
-from ragas import evaluate, EvaluationDataset
-from ragas.metrics import Faithfulness, AnswerRelevancy, LLMContextPrecisionWithReference
-from ragas.llms import LangchainLLMWrapper
-from ragas.embeddings import LangchainEmbeddingsWrapper
-from langgraph_backend import llm
-from rag_utils import embeddings as rag_embeddings
-from ragas.run_config import RunConfig
+
 
 def score_with_ragas(results):
     dataset = EvaluationDataset.from_list([
@@ -92,8 +94,7 @@ def score_with_ragas(results):
     )
 
     return scores
-from rag_utils import ingest_pdf_for_thread
-import json
+
 
 if __name__ == "__main__":
     test_thread_id = str(uuid.uuid4())

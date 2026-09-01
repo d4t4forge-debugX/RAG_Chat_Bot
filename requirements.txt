@@ -16,3 +16,4 @@ ddgs
 python-dotenv
 ragas==0.3.9
 langchain-google-vertexai
+pytest

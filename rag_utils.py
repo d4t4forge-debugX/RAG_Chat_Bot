@@ -1,10 +1,14 @@
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_community.retrievers import BM25Retriever
-from langchain_classic.retrievers import EnsembleRetriever
 import re
+import threading
+from typing import Optional
+
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.retrievers import BM25Retriever
+from langchain_community.vectorstores import FAISS
+from langchain_core.tools import tool
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_classic.retrievers import EnsembleRetriever
 
 # Stores each thread's vector store, keyed by thread_id
 _THREAD_RETRIEVERS = {}
@@ -16,11 +20,21 @@ _THREAD_METADATA = {}
 # (in-memory only), same limitation as the retriever store above.
 _QUERY_CACHE = {}
 
-import threading
-
 # Tracks background ingestion progress, keyed by thread_id.
 # status: "running" | "done" | "error"
 _INGESTION_STATUS = {}
+
+
+def _clear_thread_cache(thread_id: str):
+    """
+    Drop any cached rag_tool results for this thread. Called whenever a
+    (re-)ingestion completes, so a newly uploaded PDF can't be shadowed by
+    stale cached answers from a previous document in the same thread.
+    """
+    key = str(thread_id)
+    stale_keys = [k for k in _QUERY_CACHE if k[0] == key]
+    for k in stale_keys:
+        del _QUERY_CACHE[k]
 
 
 def ingest_pdf_for_thread(pdf_path: str, thread_id: str, filename: str = None):
@@ -34,6 +48,7 @@ def ingest_pdf_for_thread(pdf_path: str, thread_id: str, filename: str = None):
         "filename": filename or pdf_path,
         "chunks": len(chunks),
     }
+    _clear_thread_cache(thread_id)
 
     return {"filename": filename or pdf_path, "chunks": len(chunks)}
 
@@ -53,6 +68,7 @@ def _ingest_pdf_worker(pdf_path: str, thread_id: str, filename: str):
 
         _THREAD_RETRIEVERS[key] = retriever
         _THREAD_METADATA[key] = {"filename": filename or pdf_path, "chunks": len(chunks)}
+        _clear_thread_cache(key)
 
         _INGESTION_STATUS[key] = {
             "status": "done",
@@ -79,8 +95,10 @@ def start_ingestion_async(pdf_path: str, thread_id: str, filename: str = None):
 def get_ingestion_status(thread_id: str):
     return _INGESTION_STATUS.get(str(thread_id))
 
+
 def get_retriever_for_thread(thread_id: str):
     return _THREAD_RETRIEVERS.get(str(thread_id))
+
 
 def clean_text(text: str) -> str:
     # Remove invalid/orphaned unicode surrogate characters
@@ -107,15 +125,20 @@ def load_and_split_pdf(pdf_path: str):
 
     return chunks
 
+
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+
 def build_vector_store(chunks):
     vector_store = FAISS.from_documents(chunks, embeddings)
     return vector_store
+
 
 def build_bm25_retriever(chunks, k=4):
     bm25_retriever = BM25Retriever.from_documents(chunks)
     bm25_retriever.k = k
     return bm25_retriever
+
 
 def get_retriever(vector_store, chunks, k=4, bm25_k=2):
     faiss_retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": k})
@@ -126,27 +149,6 @@ def get_retriever(vector_store, chunks, k=4, bm25_k=2):
         weights=[0.7, 0.3]
     )
     return hybrid_retriever
-
-if __name__ == "__main__":
-    chunks = load_and_split_pdf("test.pdf")
-    print(f"Total chunks created: {len(chunks)}")
-
-    print("Building vector store with ALL chunks...")
-    vector_store = build_vector_store(chunks)
-    print("Vector store built successfully!")
-
-    retriever = get_retriever(vector_store, chunks)
-    query = "What is supervised learning?"
-    results = retriever.invoke(query)
-
-    print(f"\nTop {len(results)} results for query: '{query}'\n")
-    for i, doc in enumerate(results):
-        print(f"--- Result {i+1} (page {doc.metadata.get('page')}) ---")
-        print(doc.page_content[:300])
-        print()
-
-from langchain_core.tools import tool
-from typing import Optional
 
 
 @tool
@@ -183,3 +185,22 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
 
     _QUERY_CACHE[cache_key] = result
     return result
+
+
+if __name__ == "__main__":
+    chunks = load_and_split_pdf("test.pdf")
+    print(f"Total chunks created: {len(chunks)}")
+
+    print("Building vector store with ALL chunks...")
+    vector_store = build_vector_store(chunks)
+    print("Vector store built successfully!")
+
+    retriever = get_retriever(vector_store, chunks)
+    query = "What is supervised learning?"
+    results = retriever.invoke(query)
+
+    print(f"\nTop {len(results)} results for query: '{query}'\n")
+    for i, doc in enumerate(results):
+        print(f"--- Result {i+1} (page {doc.metadata.get('page')}) ---")
+        print(doc.page_content[:300])
+        print()

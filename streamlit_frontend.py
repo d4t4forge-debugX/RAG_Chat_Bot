@@ -1,12 +1,12 @@
 import streamlit as st
 from langgraph_backend import chatbot, retrieve_all_threads
-from rag_utils import start_ingestion_async, get_ingestion_status
+from rag_utils import start_ingestion_async, get_ingestion_status, get_retriever_for_thread
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from langgraph.types import Command
-from rag_utils import get_retriever_for_thread
 import uuid
 import os
 import time
+
 
 def extract_text(content):
     if isinstance(content, str):
@@ -19,19 +19,65 @@ def extract_text(content):
         return " ".join(parts)
     return str(content)
 
+
+def extract_stream_chunk_text(content):
+    """
+    Extract just the visible text delta from a single streamed message
+    chunk. Unlike extract_text() (used on a final, complete message),
+    streaming chunks are small partial fragments that must be concatenated
+    with no separator, or words get broken up with stray spaces. Chunks
+    that are internal 'thinking'/signature metadata (no 'text' type block)
+    contribute nothing.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "".join(parts)
+    return ""
+
+
 def generate_thread_id():
     return uuid.uuid4()
+
 
 def add_thread(thread_id):
     if thread_id not in st.session_state["chat_threads"]:
         st.session_state["chat_threads"].append(thread_id)
 
+
+def cleanup_finished_ingestions():
+    """
+    Checks every thread we're tracking a temp file for. If that thread's
+    ingestion has finished (done or error), delete its temp file and stop
+    tracking it. Still-running ingestions are left alone, even if the user
+    has navigated to a different thread — this is what lets background
+    ingestion survive switching threads or starting a new chat.
+    """
+    finished = []
+    for tid, temp_path in st.session_state["ingesting_temp_paths"].items():
+        status = get_ingestion_status(tid)
+        if status is not None and status["status"] in ("done", "error"):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            finished.append(tid)
+
+    for tid in finished:
+        del st.session_state["ingesting_temp_paths"][tid]
+
 def reset_chat():
+    cleanup_finished_ingestions()
     thread_id = generate_thread_id()
     st.session_state["thread_id"] = thread_id
     add_thread(thread_id)
     st.session_state["message_history"] = []
     st.session_state["pending_interrupt"] = None
+
 
 def load_conversation(thread_id):
     state = chatbot.get_state(config={"configurable": {"thread_id": thread_id}})
@@ -46,11 +92,20 @@ def load_conversation(thread_id):
 
     return messages, pending
 
+
+# ============================ Session Setup ============================
+
 if "message_history" not in st.session_state:
     st.session_state["message_history"] = []
 
 if "pending_interrupt" not in st.session_state:
     st.session_state["pending_interrupt"] = None
+
+if "ingesting_temp_paths" not in st.session_state:
+    st.session_state["ingesting_temp_paths"] = {}
+
+if "confirm_pdf_replace" not in st.session_state:
+    st.session_state["confirm_pdf_replace"] = False
 
 if "thread_id" not in st.session_state:
     st.session_state["thread_id"] = generate_thread_id()
@@ -59,6 +114,9 @@ if "chat_threads" not in st.session_state:
     st.session_state["chat_threads"] = retrieve_all_threads()
 
 add_thread(st.session_state["thread_id"])
+
+# ============================== Sidebar =================================
+
 st.sidebar.title("RAG Chatbot")
 
 if st.sidebar.button("New Chat"):
@@ -69,24 +127,73 @@ st.sidebar.subheader("Upload a PDF")
 
 uploaded_pdf = st.sidebar.file_uploader("Choose a PDF for this chat", type=["pdf"])
 current_thread_id = str(st.session_state["thread_id"])
-if get_retriever_for_thread(current_thread_id) is not None:
+
+def _start_pdf_ingestion(pdf_file):
+    """Shared by both the normal and confirmed-replace paths below, so the
+    actual ingestion kickoff logic lives in exactly one place."""
+    temp_path = f"temp_{current_thread_id}_{pdf_file.name}"
+    with open(temp_path, "wb") as f:
+        f.write(pdf_file.getvalue())
+
+    start_ingestion_async(
+        temp_path,
+        thread_id=current_thread_id,
+        filename=pdf_file.name
+    )
+    st.session_state["ingesting_temp_paths"][current_thread_id] = temp_path
+    st.session_state["confirm_pdf_replace"] = False
+    st.rerun()
+
+
+if uploaded_pdf is not None:
+    existing_doc_loaded = get_retriever_for_thread(current_thread_id) is not None
+
+    if not existing_doc_loaded:
+        # Nothing to replace — proceed exactly as before, no confirmation needed.
+        if st.sidebar.button("Process PDF"):
+            _start_pdf_ingestion(uploaded_pdf)
+
+    elif not st.session_state["confirm_pdf_replace"]:
+        # A document is already loaded for this thread. First click just
+        # asks for confirmation instead of immediately overwriting it.
+        if st.sidebar.button("Process PDF"):
+            st.session_state["confirm_pdf_replace"] = True
+            st.rerun()
+
+    else:
+        # User already clicked "Process PDF" once with a doc loaded — now
+        # show the explicit warning and require a second, distinct click.
+        st.sidebar.warning("This will replace the document currently loaded for this chat.")
+        if st.sidebar.button("Yes, replace it"):
+            _start_pdf_ingestion(uploaded_pdf)
+        if st.sidebar.button("Cancel"):
+            st.session_state["confirm_pdf_replace"] = False
+            st.rerun()
+
+# Check ingestion status directly by thread_id, every rerun — regardless of
+# whether the user navigated away and back. This is the core fix: status
+# lives in rag_utils' _INGESTION_STATUS dict (keyed by thread_id), not in
+# fragile per-session UI state, so it displays correctly no matter how the
+# user got to this thread.
+current_status = get_ingestion_status(current_thread_id)
+
+if current_status is not None and current_status["status"] == "running":
+    st.sidebar.info(f"⏳ {current_status['stage']}")
+    time.sleep(0.5)
+    st.rerun()
+elif current_status is not None and current_status["status"] == "error":
+    st.sidebar.error(f"Ingestion failed: {current_status['error']}")
+elif current_status is not None and current_status["status"] == "done":
+    result = current_status["result"]
+    st.sidebar.success(f"Indexed {result['filename']} ({result['chunks']} chunks)")
+elif get_retriever_for_thread(current_thread_id) is not None:
     st.sidebar.success("Document loaded for this chat")
 else:
     st.sidebar.info("No document loaded yet")
 
-if uploaded_pdf is not None:
-    if st.sidebar.button("Process PDF"):
-        temp_path = f"temp_{uploaded_pdf.name}"
-        with open(temp_path, "wb") as f:
-            f.write(uploaded_pdf.getvalue())
-
-        start_ingestion_async(
-            temp_path,
-            thread_id=str(st.session_state["thread_id"]),
-            filename=uploaded_pdf.name
-        )
-        st.session_state["ingesting_temp_path"] = temp_path
-        st.rerun()
+# Sweep up temp files for any thread whose ingestion has actually finished,
+# not just the one we're currently looking at.
+cleanup_finished_ingestions()
 
 # Poll for in-progress ingestion on every rerun (this is what makes it "async"
 # from the UI's perspective — Streamlit reruns the whole script on a timer
@@ -117,16 +224,14 @@ if "ingesting_temp_path" in st.session_state:
         del st.session_state["ingesting_temp_path"]
 
 st.sidebar.divider()
-
 st.sidebar.header("My Conversations")
-for message in st.session_state["message_history"]:
-    with st.chat_message(message["role"]):
-        st.text(extract_text(message["content"]))
 
 for thread_id in st.session_state["chat_threads"][::-1]:
     if st.sidebar.button(str(thread_id)):
+        cleanup_finished_ingestions()
         st.session_state["thread_id"] = thread_id
         messages, pending = load_conversation(thread_id)
+
 
         temp_messages = []
         for msg in messages:
@@ -138,11 +243,18 @@ for thread_id in st.session_state["chat_threads"][::-1]:
         st.session_state["pending_interrupt"] = pending
         st.rerun()
 
+# ============================ Main Chat Area =============================
+
+for message in st.session_state["message_history"]:
+    with st.chat_message(message["role"]):
+        st.text(extract_text(message["content"]))
+
 CONFIG = {
     "configurable": {"thread_id": st.session_state["thread_id"]},
     "metadata": {"thread_id": str(st.session_state["thread_id"])},
     "run_name": "streamlit_chat_turn",
 }
+
 
 def handle_graph_result(result):
     """Store the final answer or a pending interrupt, based on what the graph returned."""
@@ -156,6 +268,24 @@ def handle_graph_result(result):
             {"role": "assistant", "content": extract_text(answer)}
         )
 
+def stream_chat_turn(user_input, config, accumulated_holder):
+    """
+    Generator fed into st.write_stream(). Streams only chat_node's text,
+    filtering out the guardrail_node's internal YES/NO check chunks.
+    Accumulates the full text into accumulated_holder[0] as it streams,
+    since st.write_stream() only handles display, not our own state.
+    """
+    for message_chunk, metadata in chatbot.stream(
+            {"messages": [HumanMessage(content=user_input)]},
+            config=config,
+            stream_mode="messages",
+    ):
+        if metadata.get("langgraph_node") != "chat_node":
+            continue
+        text_piece = extract_stream_chunk_text(message_chunk.content)
+        if text_piece:
+            accumulated_holder[0] += text_piece
+            yield text_piece
 
 if st.session_state["pending_interrupt"] is not None:
     payload = st.session_state["pending_interrupt"]
@@ -182,9 +312,24 @@ else:
         with st.chat_message("user"):
             st.text(user_input)
 
-        result = chatbot.invoke(
-            {"messages": [HumanMessage(content=user_input)]},
-            config=CONFIG
-        )
-        handle_graph_result(result)
+        accumulated_holder = [""]
+        with st.chat_message("assistant"):
+            st.write_stream(stream_chat_turn(user_input, CONFIG, accumulated_holder))
+
+        state = chatbot.get_state(config=CONFIG)
+        pending = None
+        if state.tasks:
+            for task in state.tasks:
+                if task.interrupts:
+                    pending = task.interrupts[0].value
+                    break
+
+        if pending is not None:
+            st.session_state["pending_interrupt"] = pending
+        else:
+            st.session_state["pending_interrupt"] = None
+            st.session_state["message_history"].append(
+                {"role": "assistant", "content": accumulated_holder[0]}
+            )
+
         st.rerun()

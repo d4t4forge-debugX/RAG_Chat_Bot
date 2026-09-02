@@ -61,7 +61,7 @@ def is_query_appropriate(query: str) -> bool:
         "clearly abusive, asks for illegal content, or is obviously spam.\n\n"
         f"Message: {query}"
     )
-    response = llm.invoke(check_prompt)
+    response = llm.invoke(check_prompt, config={"tags": ["guardrail_classifier"]})
     answer = response.content
     if isinstance(answer, list):
         answer = " ".join(

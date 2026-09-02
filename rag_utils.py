@@ -25,6 +25,7 @@ _QUERY_CACHE = {}
 _INGESTION_STATUS = {}
 
 
+# wipes any cached rag_tool answers for one thread so a re-ingested PDF can't be shadowed by stale cached results
 def _clear_thread_cache(thread_id: str):
     """
     Drop any cached rag_tool results for this thread. Called whenever a
@@ -37,6 +38,7 @@ def _clear_thread_cache(thread_id: str):
         del _QUERY_CACHE[k]
 
 
+# blocking end-to-end PDF ingestion: load, split, embed, build hybrid retriever, and store it for the thread
 def ingest_pdf_for_thread(pdf_path: str, thread_id: str, filename: str = None):
     """Synchronous ingestion (kept for evaluation.py and the __main__ test below)."""
     chunks = load_and_split_pdf(pdf_path)
@@ -53,6 +55,7 @@ def ingest_pdf_for_thread(pdf_path: str, thread_id: str, filename: str = None):
     return {"filename": filename or pdf_path, "chunks": len(chunks)}
 
 
+# same ingestion pipeline as above, but runs on a background thread and reports live stage updates via _INGESTION_STATUS
 def _ingest_pdf_worker(pdf_path: str, thread_id: str, filename: str):
     """Runs on a background thread. Updates _INGESTION_STATUS as it progresses."""
     key = str(thread_id)
@@ -79,6 +82,7 @@ def _ingest_pdf_worker(pdf_path: str, thread_id: str, filename: str):
         _INGESTION_STATUS[key] = {"status": "error", "stage": "Error", "error": str(e)}
 
 
+# fire-and-forget launcher: spins up the background ingestion thread so the caller (Streamlit) doesn't block
 def start_ingestion_async(pdf_path: str, thread_id: str, filename: str = None):
     """
     Kicks off PDF ingestion on a background thread so the caller isn't
@@ -92,20 +96,24 @@ def start_ingestion_async(pdf_path: str, thread_id: str, filename: str = None):
     thread.start()
 
 
+# polling helper: lets the UI check current ingestion stage/status for a thread without blocking
 def get_ingestion_status(thread_id: str):
     return _INGESTION_STATUS.get(str(thread_id))
 
 
+# lookup helper: returns the stored hybrid retriever for a thread, or None if nothing's been ingested yet
 def get_retriever_for_thread(thread_id: str):
     return _THREAD_RETRIEVERS.get(str(thread_id))
 
 
+# strips orphaned unicode surrogate characters that can crash the embedding tokenizer on math-heavy PDF text
 def clean_text(text: str) -> str:
     # Remove invalid/orphaned unicode surrogate characters
     text = re.sub(r'[\ud800-\udfff]', '', text)
     return text
 
 
+# loads a PDF, splits it into overlapping chunks, cleans each chunk's text, and drops any empty chunks
 def load_and_split_pdf(pdf_path: str):
     loader = PyPDFLoader(pdf_path)
     documents = loader.load()
@@ -126,20 +134,24 @@ def load_and_split_pdf(pdf_path: str):
     return chunks
 
 
+# shared local HuggingFace embedding model instance used for all FAISS vector store builds
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 
+# builds a FAISS vector store (semantic/dense retrieval) from the given document chunks
 def build_vector_store(chunks):
     vector_store = FAISS.from_documents(chunks, embeddings)
     return vector_store
 
 
+# builds a BM25 retriever (lexical/keyword retrieval) from the given document chunks, capped to top-k results
 def build_bm25_retriever(chunks, k=4):
     bm25_retriever = BM25Retriever.from_documents(chunks)
     bm25_retriever.k = k
     return bm25_retriever
 
 
+# combines FAISS + BM25 into one weighted hybrid retriever via reciprocal rank fusion (0.7 semantic / 0.3 lexical)
 def get_retriever(vector_store, chunks, k=4, bm25_k=2):
     faiss_retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": k})
     bm25_retriever = build_bm25_retriever(chunks, k=bm25_k)
@@ -151,6 +163,7 @@ def get_retriever(vector_store, chunks, k=4, bm25_k=2):
     return hybrid_retriever
 
 
+# LLM-callable tool: retrieves relevant chunks for a thread's PDF, serving from cache when the same query repeats
 @tool
 def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
     """
@@ -187,6 +200,7 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
     return result
 
 
+# standalone smoke test: ingests test.pdf directly and prints top hybrid-retrieval results for a sample query
 if __name__ == "__main__":
     chunks = load_and_split_pdf("test.pdf")
     print(f"Total chunks created: {len(chunks)}")

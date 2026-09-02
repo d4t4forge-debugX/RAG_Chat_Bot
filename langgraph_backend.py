@@ -13,9 +13,12 @@ from rag_utils import rag_tool, ingest_pdf_for_thread
 from langchain_core.messages import ToolMessage
 from langchain_core.messages import SystemMessage
 from langgraph.types import interrupt, Command
+
+# loads GEMINI/API keys and other secrets from .env into the environment
 load_dotenv()
 
 # ---- Tools defined FIRST ----
+# deterministic arithmetic tool the LLM can call, no external network call so it isn't gated by HITL
 @tool
 def calculator(first_num: float, second_num: float, operation: str) -> dict:
     """
@@ -44,6 +47,8 @@ def calculator(first_num: float, second_num: float, operation: str) -> dict:
         }
     except Exception as e:
         return {"error": str(e)}
+
+# cheap permissive LLM call that flags clearly abusive/illegal/spam input before it reaches chat_node
 def is_query_appropriate(query: str) -> bool:
     """
     Lightweight check: rejects clearly off-topic or unsafe queries
@@ -65,21 +70,27 @@ def is_query_appropriate(query: str) -> bool:
         )
     return "yes" in answer.lower()
 
+# builds the active LLM instance via the swappable factory in llm_config.py
 llm = get_llm()
 
+# DuckDuckGo web search tool — the one tool gated behind human approval later
 search_tool = DuckDuckGoSearchRun(region="us-en")
 
+# full tool list bound to the LLM: web search, calculator, and PDF retrieval
 tools = [search_tool, calculator, rag_tool]
 llm_with_tools = llm.bind_tools(tools)
 
+# opens the persistent SQLite connection used to store conversation state across runs
 conn = sqlite3.connect(database="chatbot.db", check_same_thread=False)
+# LangGraph checkpointer that saves/restores graph state per thread_id
 checkpointer = SqliteSaver(conn=conn)
 
+# shared graph state: running message history plus a flag for whether guardrail blocked the turn
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     blocked: bool
 
-
+# entry node: runs the content filter on the latest human message and short-circuits with a refusal if unsafe
 def guardrail_node(state: ChatState):
     messages = state["messages"]
     last_message = messages[-1]
@@ -100,6 +111,7 @@ def guardrail_node(state: ChatState):
 
     return {"messages": [], "blocked": False}
 
+# main LLM node: injects the system prompt (grounding/anti-fabrication rules) and lets the model answer or request a tool
 def chat_node(state: ChatState, config=None):
     messages = state["messages"]
 
@@ -136,7 +148,10 @@ def chat_node(state: ChatState, config=None):
     response = llm_with_tools.invoke(full_messages, config=config)
     return {"messages": [response]}
 
+# LangGraph's prebuilt node that actually executes whichever tool the LLM requested
 tool_node = ToolNode(tools)
+
+# pauses the graph via interrupt() to get human approval before a gated tool (web search) actually runs
 def human_review_node(state: ChatState):
     last_message = state["messages"][-1]
     tool_call = last_message.tool_calls[0]
@@ -160,6 +175,7 @@ def human_review_node(state: ChatState):
         )
         return Command(goto="chat_node", update={"messages": [denial]})
 
+# routes after chat_node: sends web-search calls to human review, other tool calls straight to tools, else ends
 def route_after_chat(state: ChatState):
     last_message = state["messages"][-1]
     if not getattr(last_message, "tool_calls", None):
@@ -168,12 +184,13 @@ def route_after_chat(state: ChatState):
         return "human_review_node"
     return "tools"
 
+# routes after guardrail_node: ends immediately if blocked, otherwise proceeds to chat_node
 def route_after_guardrail(state: ChatState):
     if state.get("blocked"):
         return END
     return "chat_node"
 
-
+# assembles the graph: guardrail_node -> chat_node <-> tools/human_review_node, per the documented architecture
 graph = StateGraph(ChatState)
 graph.add_node("guardrail_node", guardrail_node)
 graph.add_node("chat_node", chat_node)
@@ -185,43 +202,14 @@ graph.add_conditional_edges("guardrail_node", route_after_guardrail)
 graph.add_conditional_edges("chat_node", route_after_chat)
 graph.add_edge("tools", "chat_node")
 
+# compiles the graph into the runnable chatbot object, wired to the SQLite checkpointer
 chatbot = graph.compile(checkpointer=checkpointer)
 
+# helper for the Streamlit sidebar: lists every distinct thread_id that has saved checkpoint state
 def retrieve_all_threads():
     all_threads = set()
     for checkpoint in checkpointer.list(None):
         all_threads.add(checkpoint.config["configurable"]["thread_id"])
     return list(all_threads)
 
-if __name__ == "__main__":
-    import uuid
-    test_thread_id = f"hitl-test-{uuid.uuid4()}"
-    CONFIG = {
-        "configurable": {"thread_id": test_thread_id},
-        "metadata": {"thread_id": test_thread_id},
-        "run_name": "hitl_smoke_test",
-    }
-
-    print("Asking a question that should trigger a web search...\n")
-    result = chatbot.invoke(
-        {"messages": [HumanMessage(content="Search the web for the latest LangGraph release version.")]},
-        config=CONFIG
-    )
-
-    while "__interrupt__" in result:
-        payload = result["__interrupt__"][0].value
-        print("PAUSED FOR APPROVAL:")
-        print(f"  Tool: {payload['tool_name']}")
-        print(f"  Args: {payload['tool_args']}")
-
-        decision = input("\nApprove this tool call? (approve/reject): ").strip().lower()
-        result = chatbot.invoke(Command(resume=decision), config=CONFIG)
-
-    answer = result["messages"][-1].content
-    if isinstance(answer, list):
-        answer = " ".join(
-            block.get("text", "") for block in answer
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-    print("\nFinal answer:")
-    print(answer)
+# terminal smoke test: fires a query that

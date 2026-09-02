@@ -5,10 +5,13 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 # To swap models or providers later, change this file — not every
 # file that happens to need an LLM.
 
+# fallback model name used when LLM_MODEL isn't set in .env
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
+# fallback Gemini thinking-budget setting used when LLM_THINKING_LEVEL isn't set in .env
 DEFAULT_THINKING_LEVEL = "low"
 
 
+# factory function: builds and returns the single shared LLM instance used everywhere in the app
 def get_llm():
     """
     Returns the chat model used across the app (main chat, guardrail

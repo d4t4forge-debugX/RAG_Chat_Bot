@@ -8,6 +8,7 @@ import os
 import time
 
 
+# pulls plain display text out of a complete (non-streamed) message's content, handling both str and block-list formats
 def extract_text(content):
     if isinstance(content, str):
         return content
@@ -20,6 +21,7 @@ def extract_text(content):
     return str(content)
 
 
+# pulls visible text out of one streamed message chunk, concatenating with no separator so words don't get split
 def extract_stream_chunk_text(content):
     """
     Extract just the visible text delta from a single streamed message
@@ -40,15 +42,18 @@ def extract_stream_chunk_text(content):
     return ""
 
 
+# creates a brand-new random thread_id for a new conversation
 def generate_thread_id():
     return uuid.uuid4()
 
 
+# registers a thread_id in the sidebar's thread list if it isn't already tracked
 def add_thread(thread_id):
     if thread_id not in st.session_state["chat_threads"]:
         st.session_state["chat_threads"].append(thread_id)
 
 
+# sweeps temp PDF files for any thread whose background ingestion has finished (done or error), regardless of active thread
 def cleanup_finished_ingestions():
     """
     Checks every thread we're tracking a temp file for. If that thread's
@@ -70,6 +75,7 @@ def cleanup_finished_ingestions():
     for tid in finished:
         del st.session_state["ingesting_temp_paths"][tid]
 
+# starts a fresh conversation: clears history, pending interrupt, and generates a new thread_id
 def reset_chat():
     cleanup_finished_ingestions()
     thread_id = generate_thread_id()
@@ -79,6 +85,7 @@ def reset_chat():
     st.session_state["pending_interrupt"] = None
 
 
+# reloads a saved thread's message history from the checkpointer, plus any pending HITL interrupt still paused on it
 def load_conversation(thread_id):
     state = chatbot.get_state(config={"configurable": {"thread_id": thread_id}})
     messages = state.values.get("messages", [])
@@ -128,6 +135,7 @@ st.sidebar.subheader("Upload a PDF")
 uploaded_pdf = st.sidebar.file_uploader("Choose a PDF for this chat", type=["pdf"])
 current_thread_id = str(st.session_state["thread_id"])
 
+# writes the uploaded PDF to a thread-scoped temp path and kicks off background ingestion for it
 def _start_pdf_ingestion(pdf_file):
     """Shared by both the normal and confirmed-replace paths below, so the
     actual ingestion kickoff logic lives in exactly one place."""
@@ -199,6 +207,9 @@ cleanup_finished_ingestions()
 # from the UI's perspective — Streamlit reruns the whole script on a timer
 # while we're polling, so the user sees live progress instead of one frozen
 # blocking spinner).
+# NOTE: this whole block checks a session_state key ("ingesting_temp_path", singular)
+# that is never set anywhere in this file anymore — it is dead/unreachable code left
+# over from the old single-thread tracking design; flagged above, not removed here
 if "ingesting_temp_path" in st.session_state:
     status = get_ingestion_status(current_thread_id)
 
@@ -226,6 +237,7 @@ if "ingesting_temp_path" in st.session_state:
 st.sidebar.divider()
 st.sidebar.header("My Conversations")
 
+# thread-switch loop: loads the selected thread's history + any pending interrupt, then reruns to refresh the view
 for thread_id in st.session_state["chat_threads"][::-1]:
     if st.sidebar.button(str(thread_id)):
         cleanup_finished_ingestions()
@@ -245,6 +257,7 @@ for thread_id in st.session_state["chat_threads"][::-1]:
 
 # ============================ Main Chat Area =============================
 
+# renders every stored message in the current thread's history
 for message in st.session_state["message_history"]:
     with st.chat_message(message["role"]):
         st.text(extract_text(message["content"]))
@@ -256,6 +269,7 @@ CONFIG = {
 }
 
 
+# used after an approve/reject .invoke() call: stores either a new pending interrupt or the final answer in history
 def handle_graph_result(result):
     """Store the final answer or a pending interrupt, based on what the graph returned."""
     if "__interrupt__" in result:
@@ -268,6 +282,7 @@ def handle_graph_result(result):
             {"role": "assistant", "content": extract_text(answer)}
         )
 
+# generator for st.write_stream(): streams only chat_node's assistant tokens and accumulates the full text as it goes
 def stream_chat_turn(user_input, config, accumulated_holder):
     """
     Generator fed into st.write_stream(). Streams only chat_node's text,
@@ -287,6 +302,7 @@ def stream_chat_turn(user_input, config, accumulated_holder):
             accumulated_holder[0] += text_piece
             yield text_piece
 
+# top-level branch: if a tool call is awaiting approval, show the approve/reject card instead of the chat input
 if st.session_state["pending_interrupt"] is not None:
     payload = st.session_state["pending_interrupt"]
     st.warning(
@@ -305,6 +321,7 @@ if st.session_state["pending_interrupt"] is not None:
             st.rerun()
 
 else:
+    # normal turn: take chat input, stream the assistant's reply live, then check whether it paused on an interrupt
     user_input = st.chat_input("Type here")
 
     if user_input:

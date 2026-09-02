@@ -3,6 +3,7 @@ import pytest
 from rag_utils import rag_tool, _QUERY_CACHE, _clear_thread_cache
 
 
+# resets the shared module-level query cache before and after every test so results can't leak between tests
 @pytest.fixture(autouse=True)
 def clear_cache_before_each_test():
     """
@@ -17,6 +18,7 @@ def clear_cache_before_each_test():
     _QUERY_CACHE.clear()
 
 
+# builds a fake retriever whose .invoke() returns one fake document, standing in for a real hybrid EnsembleRetriever
 def _make_fake_retriever(page_content="Fake chunk content", page=1):
     """A minimal stand-in for a real EnsembleRetriever: .invoke(query)
     returns a list of fake documents with just page_content and metadata,
@@ -30,6 +32,7 @@ def _make_fake_retriever(page_content="Fake chunk content", page=1):
     return fake_retriever
 
 
+# verifies a brand-new query is a cache miss and actually hits the retriever
 def test_first_call_is_cache_miss():
     fake_retriever = _make_fake_retriever()
     with patch("rag_utils.get_retriever_for_thread", return_value=fake_retriever):
@@ -39,6 +42,7 @@ def test_first_call_is_cache_miss():
         fake_retriever.invoke.assert_called_once_with("What is X?")
 
 
+# verifies repeating the exact same query on the same thread is served from cache without hitting the retriever again
 def test_second_identical_call_is_cache_hit():
     fake_retriever = _make_fake_retriever()
     with patch("rag_utils.get_retriever_for_thread", return_value=fake_retriever):
@@ -51,6 +55,7 @@ def test_second_identical_call_is_cache_hit():
         fake_retriever.invoke.assert_called_once()
 
 
+# verifies the cache key normalization (strip + lowercase) treats differently-cased/spaced queries as the same entry
 def test_cache_key_is_case_and_whitespace_insensitive():
     """rag_tool normalizes the cache key via query.strip().lower() — confirm
     a differently-cased/spaced but semantically identical query still hits
@@ -64,6 +69,7 @@ def test_cache_key_is_case_and_whitespace_insensitive():
         fake_retriever.invoke.assert_called_once()
 
 
+# verifies the same query text on two different threads is cached separately and both trigger their own retrieval
 def test_different_threads_do_not_share_cache():
     fake_retriever = _make_fake_retriever()
     with patch("rag_utils.get_retriever_for_thread", return_value=fake_retriever):
@@ -74,6 +80,7 @@ def test_different_threads_do_not_share_cache():
         assert fake_retriever.invoke.call_count == 2
 
 
+# verifies _clear_thread_cache only wipes the targeted thread's cached entries, leaving other threads' entries intact
 def test_clear_thread_cache_removes_only_that_threads_entries():
     fake_retriever = _make_fake_retriever()
     with patch("rag_utils.get_retriever_for_thread", return_value=fake_retriever):

@@ -12,7 +12,7 @@ from langgraph_backend import chatbot, llm
 from rag_utils import get_retriever_for_thread, ingest_pdf_for_thread
 from rag_utils import embeddings as rag_embeddings
 
-
+# fixed set of 3 questions + hand-written ground truths used as the RAGAS eval benchmark
 test_questions = [
     {
         "question": "What is supervised learning?",
@@ -29,6 +29,7 @@ test_questions = [
 ]
 
 
+# runs each test question through the real chatbot graph and separately captures the raw retrieved chunks for scoring
 def run_evaluation(thread_id: str):
     results = []
 
@@ -66,6 +67,7 @@ def run_evaluation(thread_id: str):
     return results
 
 
+# feeds the collected Q/A/context/ground-truth rows into RAGAS and scores faithfulness, relevancy, and context precision
 def score_with_ragas(results):
     dataset = EvaluationDataset.from_list([
         {
@@ -96,6 +98,7 @@ def score_with_ragas(results):
     return scores
 
 
+# standalone harness entry point: ingests a fresh copy of test.pdf, runs the eval, scores it, and saves results to disk
 if __name__ == "__main__":
     test_thread_id = str(uuid.uuid4())
     pdf_path = "test.pdf"

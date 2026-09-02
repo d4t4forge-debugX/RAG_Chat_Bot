@@ -285,17 +285,20 @@ def handle_graph_result(result):
 # generator for st.write_stream(): streams only chat_node's assistant tokens and accumulates the full text as it goes
 def stream_chat_turn(user_input, config, accumulated_holder):
     """
-    Generator fed into st.write_stream(). Streams only chat_node's text,
-    filtering out the guardrail_node's internal YES/NO check chunks.
-    Accumulates the full text into accumulated_holder[0] as it streams,
-    since st.write_stream() only handles display, not our own state.
+    Generator fed into st.write_stream(). Streams chat_node's text and
+    guardrail_node's refusal message, while explicitly excluding
+    guardrail_node's internal YES/NO classifier call via its
+    "guardrail_classifier" tag — tag-based, not text-based, so a real
+    answer that happens to start with "No" is never mistakenly filtered.
     """
     for message_chunk, metadata in chatbot.stream(
             {"messages": [HumanMessage(content=user_input)]},
             config=config,
             stream_mode="messages",
     ):
-        if metadata.get("langgraph_node") != "chat_node":
+        if metadata.get("langgraph_node") not in ("chat_node", "guardrail_node"):
+            continue
+        if "guardrail_classifier" in metadata.get("tags", []):
             continue
         text_piece = extract_stream_chunk_text(message_chunk.content)
         if text_piece:

@@ -1,0 +1,62 @@
+[
+  {
+    "doc": "test.pdf",
+    "question": "What is supervised learning?",
+    "ground_truth": "Supervised learning is a type of machine learning where the training data fed to the algorithm includes the desired solutions, called labels.",
+    "evidence": "includes the desired solutions, called labels"
+  },
+  {
+    "doc": "test.pdf",
+    "question": "What is the difference between linear regression and logistic regression?",
+    "ground_truth": "Linear regression outputs a continuous numerical value directly, while logistic regression passes that value through a sigmoid function to output a probability between 0 and 1, used for classification.",
+    "evidence": "instead of outputting the result directly like the Linear Regression model does"
+  },
+  {
+    "doc": "test.pdf",
+    "question": "What is regularization used for in machine learning?",
+    "ground_truth": "Regularization is used to reduce overfitting by constraining a model, typically by reducing the degrees of freedom it has.",
+    "evidence": "Regularization reduces the risk of overfitting"
+  },
+  {
+    "doc": "test.pdf",
+    "question": "What is a labeled training set?",
+    "ground_truth": "A training set that contains the desired solution (a.k.a. a label) for each instance.",
+    "evidence": "A labeled training set is a training set that contains the desired solution"
+  },
+  {
+    "doc": "test.pdf",
+    "question": "What is a hyperparameter, and how does it differ from a model parameter?",
+    "ground_truth": "A hyperparameter is a parameter of the learning algorithm, not of the model. It is not affected by the learning algorithm itself, must be set before training, and stays constant during training.",
+    "evidence": "A hyperparameter is a parameter of a learning algorithm (not of the model)"
+  },
+  {
+    "doc": "test.pdf",
+    "question": "Which hyperparameter controls the regularization strength of a Scikit-Learn LogisticRegression model, and how does it relate to alpha?",
+    "ground_truth": "It is C, the inverse of alpha. The higher the value of C, the less the model is regularized.",
+    "evidence": "is not alpha (as in other linear models), but its inverse: C"
+  },
+  {
+    "doc": "test.pdf",
+    "question": "What is the goal in Reinforcement Learning, and how does the agent learn?",
+    "ground_truth": "The goal is to find a good policy. The agent is not explicitly given the right answer; it must learn by trial and error, guided by rewards.",
+    "evidence": "the goal is to find a good policy"
+  },
+  {
+    "doc": "test.pdf",
+    "question": "In Logistic Regression, what does the model predict if the estimated probability is greater than 50%?",
+    "ground_truth": "That the instance belongs to the positive class, labeled 1.",
+    "evidence": "then the model predicts that the instance belongs to that class"
+  },
+  {
+    "doc": "test.pdf",
+    "question": "When should the regularization term be added to the cost function?",
+    "ground_truth": "Only during training. Once the model is trained, the unregularized performance measure should be used to evaluate it.",
+    "evidence": "the regularization term should only be added to the cost function during training"
+  },
+  {
+    "doc": "test.pdf",
+    "question": "What kinds of problems is Machine Learning great for?",
+    "ground_truth": "Complex problems with no algorithmic solution, replacing long lists of hand-tuned rules, building systems that adapt to fluctuating environments, and helping humans learn (e.g., data mining).",
+    "evidence": "to replace long lists of hand-tuned rules"
+  }
+]

@@ -473,39 +473,107 @@ re-runs. (Full historical baselines, including pre-hybrid and the
   `test.pdf`, `.idea/`, `.DS_Store`, `requirements_current.txt`,
   `.agents/`, `.claude/`, `PROJECT KNOWLEDGE*`.
 
+## Flaws-list verification session (2026-10-02)
+
+An external "flaws and fix list" (13 items) was re-verified from scratch, one item at a time. Everything
+below was measured or tested in this session. Supersedes older statements where they conflict (e.g. the
+15-test count, the "test.pdf was committed" claim, the 3-question RAGAS baselines).
+
+### Evaluation rebuilt (flaw items 1, 2)
+- `evaluation.py` rewritten: reads `eval_questions/*.json`; scores the chunks the chatbot's OWN `rag_tool`
+  calls returned (`get_contexts_used_by_chatbot`), not a separate re-retrieval; each question runs on a
+  fresh thread (`create_fresh_thread_with_document` copies the already-built retriever); per-question status
+  (ok / chatbot_error / paused_for_approval / empty_answer / no_retrieval); retries on API errors; saves
+  `eval_runs/<label>_<timestamp>.json` (meta + per-question scores); flags `--limit-per-doc`, `--label`.
+- Question set: 24 questions over 3 documents: `test.pdf` Hands-On ML textbook (10), `test3.pdf` "Attention
+  Is All You Need" (8, fetched with curl from arxiv.org/pdf/1706.03762), `test4.pdf` BASWE six-project build
+  guide (6). `test2.pdf` (scanned pharmacy book, only 7 of 196 pages had text) was rejected. Every question has
+  doc / question / ground_truth / evidence; `verify_questions.py` confirms each evidence phrase is in the PDF.
+  test2/3/4.pdf and `eval_runs/` are gitignored.
+- RAGAS, hybrid (k=4 + bm25_k=2, weights 0.7/0.3), ONE run (`hybrid_k4_bm25k2_20261002_135120.json`), all 24 ok:
+  faithfulness 1.0, answer relevancy 0.868, context precision 0.754. Per document (rel / ctx precision):
+  textbook 0.798 / 0.717, paper 0.903 / 0.840, guide 0.937 / 0.700. NOT comparable with the old 3-question numbers.
+- Faithfulness is saturated at 1.0, so it cannot discriminate between configs. 7 of the 10 textbook questions were
+  written from passages earlier runs had already retrieved, so the set is on the easy side. Judge = same model family.
+- Retrieval comparison (`compare_retrieval.py`, `hit_rate.py`; raw question as query, evidence phrase in retrieved
+  chunks, no LLM calls): FAISS k=6 18/24, FAISS k=4 18/24, hybrid 20/24; MRR 0.503 / 0.503 / 0.510. Retrieval-only: it
+  does not measure clutter. Of hybrid's misses, two were near misses (FAISS rank 7 and 8, just outside k=4) and two were
+  equivalent passages. In-app hit rate in the full run was 23/24 (one false miss: evidence phrase from Appendix A while
+  the chatbot used the Chapter 1 text).
+- Chunking / noise filter (`compare_chunking.py`, scored by page-level hit): 1000/200 current 22/24 (noise 0.7%);
+  + noise filter 22/24 (noise 0.0%); 500/100 20/24; 1500/300 20/24; 1000/0 21/24. DECISION: no change to chunk size
+  and the filter is NOT adopted (gain marginal, adds ingestion risk on unseen layouts). `chunk_filter.py` flags 114 of
+  2,339 textbook chunks (contents/index/dividers); kept as a documented experiment with 9 tests. Digit-ratio rules were
+  too aggressive on tables and code; the final rules use dot leaders, page-number line endings and a decimals guard.
+- Guardrail accuracy (`guardrail_cases.json`, `guardrail_eval.py`, 40 hand-written cases): 20/20 should-allow allowed,
+  18/20 should-block blocked; the 2 misses were gibberish strings (prompt is deliberately permissive).
+- Cache benchmark (`bench_cache.py`, retrieval step only): cached ~0.07 ms vs 13.79 ms uncached on the textbook
+  (193x over 10 queries); 65x to 432x across the three documents. Replaces the inconsistent 140x / 150x / 166.6x.
+  Uncached time was NOT driven by index size (the 2,339-chunk book searched faster than the 52-chunk paper).
+
+### App changes
+- Source citations (flaw item 3): `source_utils.py` (`extract_sources`, `format_sources`); `streamlit_frontend.py` shows
+  "Sources retrieved: <file> (PDF pages ...)" under live answers (pages are 0-based in PyPDFLoader, shown +1; only the
+  latest turn counts). Verified live: scaling question cited pages 4 and 5, and page 4 holds the passage. Limitations:
+  not restored when a saved thread is reloaded; a follow-up answered from chat history shows no sources; label says
+  "retrieved", not "used". `test_source_utils.py` (7 tests).
+- Tool failures: `ToolNode(tools, handle_tool_errors=handle_tool_failure)` in `langgraph_backend.py`; the handler returns
+  a message telling the model not to retry (prevents approval-card retry loops). `test_tool_failure.py` (2 tests). A
+  ToolNode cannot be `.invoke()`d on its own; the test runs it inside a tiny StateGraph.
+- Model errors: `error_utils.py` (`friendly_error_message`: daily quota, per-minute limit, unavailable, network, generic;
+  strips raw API details, shortens retry time). `streamlit_frontend.py`: `resume_with()` helper for Approve/Reject (keeps
+  the approval card on failure) and a try/except around `st.write_stream` that appends a "⚠️" assistant message.
+  `test_error_utils.py` (6) and `test_ui_errors.py` (2, Streamlit `AppTest` with a mocked chatbot). NOT yet checked live:
+  what happens on the next question after a failed turn (the user message is saved without an answer).
+- `patch_ragas.py`: idempotent patch for the ragas==0.3.9 import bug; finds `ragas/llms/base.py` without importing
+  ragas, writes a one-time `.orig` backup, clears `__pycache__`, verifies `import ragas`. `test_patch_ragas.py` (3).
+  Proven end to end: force-reinstalled ragas==0.3.9 (import broke), ran the script (import worked).
+- Test suite: 44 passing (15 original + 7 sources + 2 tool failure + 3 patch + 9 chunk filter + 6 error utils + 2 UI).
+- README.md rewritten (evaluation section with the numbers above, setup incl. `python patch_ragas.py`, limitations,
+  no screenshots or demo video by the user's choice).
+
+### Corrections to earlier notes
+- Git history was inspected: `.env` and `test.pdf` were NEVER committed; no blob over 5 MB; no "AIza" string in any
+  commit; `.idea/` was committed once (da32714) and removed (6c8ab90). Earlier statements that test.pdf was committed
+  and untracked were wrong. The optional `git grep "lsv2_"` check (LangSmith key prefix) was not run.
+- Gemini free tier: 15 requests per minute and 500 per day for gemini-3.5-flash-lite. The daily quota was exhausted on
+  2026-10-02 by evaluation runs; each chat turn costs about 3 calls (guardrail, tool decision, answer).
+- `echo "x" >> .gitignore` glued text onto the last line (no trailing newline) and broke two patterns; use
+  `printf "\nname\n" >> .gitignore`.
+- Streamlit's file watcher prints torchvision tracebacks (harmless; `--server.fileWatcherType none` hides them).
+- PyCharm auto-stages new files, so `git status` shows `AM` (added then modified): re-add files before committing.
+
+### Flaws-list status
+| # | Item | Status |
+|---|---|---|
+| 1 | Larger eval set | Done (24 questions, 3 documents, verified) |
+| 2 | FAISS vs hybrid | Done as a retrieval-only comparison, limits stated |
+| 3 | Source citations | Done for live answers; reload limitation documented |
+| 4 | Git history | Done: clean (optional lsv2_ check not run) |
+| 5 | Streaming re-check | Done: normal and blocked paths verified |
+| 6 | Noisy chunks / context precision | Measured, no app change |
+| 7 | Chunk size | Measured, 1000/200 kept |
+| 8 | Cache speedup | Done: measured, wording fixed |
+| 9 | Demo and screenshots | Closed by the user's choice: none |
+| 10 | RAGAS patch | Done: patch_ragas.py |
+| 11 | Guardrail accuracy | Done: 38/40 |
+| 12 | CI | Skipped on purpose |
+| 13 | Known limits | Documented in README |
+
 ## Open Issues / Priority List
 
-1. ~~Streaming + tool-status badge~~ — **DONE, verified.** Tool-status
-   badge deliberately not built (optional future idea, not current scope).
-2. ~~Automated tests (pytest)~~ — **DONE**, 15 tests passing.
-3. ~~Single-PDF-per-thread behavior~~ — **DONE**, decided (option 2:
-   confirm-before-replace) and implemented/verified.
-4. ~~Streamlit streaming bugs (dead code, guardrail refusal not
-   showing/garbled)~~ — **DONE this session**, both fixed and verified via
-   screenshots.
-5. **Minor: happy-path re-verification after the guardrail-streaming
-   fix.** A normal, allowed question streaming correctly was flagged as
-   worth confirming after the tag-filter change went in, but not yet
-   explicitly re-tested/screenshotted. Quick sanity check, not expected to
-   reveal anything — do this before or during the next session.
-6. **README.md for the GitHub repo — NEXT major item.** Not started.
-   Still need to decide: audience (recruiter-skim vs. technical-detailed
-   vs. both in sections) and format (draft in chat first vs. paste-ready
-   `.md` directly).
-7. **Resume/portfolio writeup** — not started.
-8. **Deployment (Days 19–20) — deliberately last.** Redeploy to Streamlit
-   Cloud with all recent changes (now pushed to GitHub), then re-verify
-   all 5 stretch features + streaming + PDF-replace confirmation on the
-   live deployed app.
+1. After the Gemini daily quota resets: one live check of the app (a normal question, a deliberately failed one such
+   as Wi-Fi off, then another normal question) to see the state after a failed turn; optionally add about 6 harder
+   evaluation questions (about 4 unanswerable, 2 multi-passage) and score the unanswerable ones by refusal wording.
+2. The single git commit and push (nothing is committed from this session yet): re-add files explicitly (many show
+   `AM`), review `git diff --cached` per file, decide which helper scripts to include (`show_noise.py` and
+   `show_noise_detail.py` are probably local-only), ignore `files.zip`, then commit README.md and PROJECT_NOTES.md.
+3. Optional: `git grep -I -l "lsv2_" $(git rev-list --all)`; a timeout on LLM calls (one call hung once); sources on
+   thread reload; deployment (only if a link will actually be shared).
 
-**Explicitly deferred, not gaps**: semantic chunking, multi-user auth,
-cost/quota routing, multi-PDF-per-thread support, new tool integrations
-(weather/stocks/etc.), and a runtime hallucination-detection gate
-(self-consistency / NLI / LLM-as-judge) — all discussed and deliberately
-scoped out as lower interview value / high effort / real risk relative to
-time and quota left. Documented as intentional scope decisions, each with
-its own defensible interview framing (see "Key Decisions" and
-"Hallucination detection" above).
+**Explicitly deferred, not gaps**: semantic chunking, multi-user auth, cost/quota routing, multi-PDF-per-thread, new
+tool integrations (weather/stocks), a runtime hallucination gate (self-consistency / NLI / LLM-as-judge), the chunk
+noise filter, a different chunk size, CI, screenshots and a demo video.
 
 ## Conventions / Rules to Follow
 - Rohit is new to practical implementation — spell out every step
@@ -562,28 +630,14 @@ its own defensible interview framing (see "Key Decisions" and
   attached summary at face value.
 
 ## Continue from here
-This session: added explanatory one-line comments across
-`evaluation.py`, `langgraph_backend.py`, `llm_config.py`, `rag_utils.py`,
-`streamlit_frontend.py`, plus three new pytest files
-(`test_calculator.py`, `test_guardrail.py`, `test_rag_caching.py`, 15
-tests total, all passing). During that review, found and fixed two real
-bugs in `streamlit_frontend.py`'s streaming path (dead code block; a
-guardrail refusal that was invisible, then garbled by leaked classifier
-text once first widened). Both committed and pushed (`ea5b42c`,
-`780628d`). Also discussed the "self-consistency / NLI / LLM-as-judge"
-hallucination-detection techniques against the actual codebase and made an
-explicit, documented decision not to add a runtime gate right now (see
-"Hallucination detection" section above for the full reasoning and the
-interview-ready explanation to give if asked).
+The flaws list is finished except for the live check and the commit (see Open Issues). This session rebuilt the
+evaluation (24 verified questions, 3 documents, chatbot-actual contexts), compared retrieval settings (hybrid 20/24 vs
+FAISS 18/24 on raw questions; chunk size 1000/200 kept; noise filter measured but not adopted), measured the guardrail
+(38/40) and the cache (retrieval step only), added source pages under answers, tool-failure and model-error handling,
+a one-command ragas patch, and rewrote the README. 44 tests pass.
 
-**Next session should**: (1) do the quick happy-path streaming
-re-verification flagged in Open Issues item 5, then (2) move to README.md
-(item 6) — two open questions to resolve first: audience (recruiter-skim
-vs. technical vs. both) and format (chat draft first vs. paste-ready file
-directly). After README: resume/portfolio writeup (item 7), then
-deployment (item 8) last.
+**Next session should**: wait for the Gemini quota, run the live check, optionally add the harder questions, then do
+the single commit (re-add files, review `git diff --cached`).
 
-Rohit was explicit that new RAG tools (weather, stocks, etc.) are **not**
-wanted right now, and that a runtime hallucination-detection layer is a
-deliberate, documented "not now" rather than an oversight — don't propose
-either again unless Rohit brings it up.
+Rohit was explicit that new RAG tools (weather, stocks, etc.) are not wanted, that a runtime hallucination-detection
+layer is a deliberate "not now", and that he does not want screenshots or videos in the repo. Do not propose those again.

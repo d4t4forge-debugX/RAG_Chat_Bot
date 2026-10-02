@@ -148,8 +148,17 @@ def chat_node(state: ChatState, config=None):
     response = llm_with_tools.invoke(full_messages, config=config)
     return {"messages": [response]}
 
-# LangGraph's prebuilt node that actually executes whichever tool the LLM requested
-tool_node = ToolNode(tools)
+# turns any tool exception (for example, no network for web search) into a message the model can read, instead of crashing the app
+def handle_tool_failure(error: Exception) -> str:
+    return (
+        f"The tool failed with an error ({type(error).__name__}). "
+        "Do not retry this tool. Tell the user the tool could not complete "
+        "and ask whether they want to try again later."
+    )
+
+
+# LangGraph's prebuilt node that runs whichever tool the LLM requested; failures are reported back to the model, not raised
+tool_node = ToolNode(tools, handle_tool_errors=handle_tool_failure)
 
 # pauses the graph via interrupt() to get human approval before a gated tool (web search) actually runs
 def human_review_node(state: ChatState):

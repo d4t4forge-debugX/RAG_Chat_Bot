@@ -1,0 +1,50 @@
+[
+  {
+    "doc": "test3.pdf",
+    "question": "What is the Transformer architecture based on, and what does it dispense with?",
+    "ground_truth": "The Transformer is based solely on attention mechanisms, dispensing with recurrence and convolutions entirely.",
+    "evidence": "based solely on attention mechanisms"
+  },
+  {
+    "doc": "test3.pdf",
+    "question": "What BLEU score did the Transformer achieve on the WMT 2014 English-to-German translation task?",
+    "ground_truth": "28.4 BLEU.",
+    "evidence": "28.4 BLEU"
+  },
+  {
+    "doc": "test3.pdf",
+    "question": "Why do recurrent models limit parallelization during training?",
+    "ground_truth": "Their inherently sequential nature precludes parallelization within training examples, which becomes critical at longer sequence lengths.",
+    "evidence": "precludes parallelization within training examples"
+  },
+  {
+    "doc": "test3.pdf",
+    "question": "Why are the dot products scaled in scaled dot-product attention?",
+    "ground_truth": "For large values of the key dimension the dot products grow large in magnitude, pushing the softmax function into regions where it has extremely small gradients, so they are scaled down.",
+    "evidence": "pushing the softmax function into regions where it has extremely small gradients"
+  },
+  {
+    "doc": "test3.pdf",
+    "question": "What does multi-head attention allow the model to do?",
+    "ground_truth": "It allows the model to jointly attend to information from different representation subspaces at different positions.",
+    "evidence": "jointly attend to information from different representation subspaces"
+  },
+  {
+    "doc": "test3.pdf",
+    "question": "How does the Transformer give the model information about the order of tokens in a sequence?",
+    "ground_truth": "It adds positional encodings to the input embeddings, using sine and cosine functions of different frequencies.",
+    "evidence": "sine and cosine functions of different frequencies"
+  },
+  {
+    "doc": "test3.pdf",
+    "question": "How many identical layers make up the Transformer encoder stack?",
+    "ground_truth": "The encoder is a stack of N = 6 identical layers.",
+    "evidence": "N = 6"
+  },
+  {
+    "doc": "test3.pdf",
+    "question": "What hardware and training length were used for the base Transformer models?",
+    "ground_truth": "One machine with 8 NVIDIA P100 GPUs; the base models were trained for 100,000 steps, about 12 hours.",
+    "evidence": "8 NVIDIA P100 GPUs"
+  }
+]

@@ -1,127 +1,183 @@
 # RAG Chatbot
 
-A retrieval-augmented generation chatbot that answers questions from an uploaded PDF, with hybrid search, human-in-the-loop approval for web search, conversation persistence, and RAGAS-based evaluation. Built as a placement-interview portfolio project — every design choice below is intentional and documented, not accidental.
+A retrieval-augmented generation chatbot that answers questions from an uploaded PDF, with hybrid search, human-in-the-loop approval for web search, source pages shown under answers, conversation persistence, and a measured evaluation. Built as a portfolio project; the design choices and the measured results below are documented, including where something did not help.
 
-<!-- Screenshot / GIF placeholder — add a screenshot of the chat UI here once available -->
-<!-- ![App screenshot](docs/screenshot.png) -->
-
-**Live demo:** coming soon (deployment is the final step of this project — see [Roadmap](#roadmap))
+It is not deployed. It runs locally (see [Setup](#setup)).
 
 ---
 
 ## What it does
 
-Upload a PDF, ask questions about it, and get answers grounded in the document's actual content. If the document doesn't cover something, the assistant can search the web instead — but only after you explicitly approve that specific search, so nothing leaves your machine without permission. The system is also self-evaluating: it ships with a RAGAS-based evaluation harness that scores answer faithfulness, relevancy, and context precision, so retrieval quality isn't just assumed — it's measured.
+Upload a PDF, ask questions about it, and get answers grounded in the document, with the PDF pages the answer was retrieved from shown underneath. If the document does not cover something, the assistant can search the web instead, but only after you approve that specific search, so nothing leaves your machine without permission. Retrieval quality is measured, not assumed: the repo includes an evaluation harness, a hand-checked question set, and scripts that compare retrieval settings.
 
 ## Key features
 
-- **Hybrid retrieval (FAISS + BM25)** — combines dense semantic search with sparse keyword search via LangChain's `EnsembleRetriever`, tuned to reduce keyword-search noise (see [Design Decisions](#key-design-decisions--trade-offs))
-- **Human-in-the-loop approval for web search** — every web search is paused via LangGraph's `interrupt()` and requires explicit user approval before it runs
-- **Streamed responses** — answers stream token-by-token in the UI instead of appearing all at once, using LangGraph's `stream()` API filtered to the correct graph node
-- **Conversation persistence** — each chat thread is saved via `SqliteSaver`, so conversations (including paused approvals) survive page reloads and thread switching
-- **Async PDF ingestion** — PDF processing runs on a background thread with live progress feedback in the UI, so the interface never freezes during embedding
-- **In-memory query caching** — repeated questions within a session skip re-retrieval entirely (measured ~150x speedup on cache hits)
-- **Swappable LLM backend** — the model is selected through one config function, overridable via environment variable, with no other file needing to change
-- **Input guardrails** — a lightweight LLM classifier screens out inappropriate queries before they reach the main chat flow
-- **Automated tests** — 15 pytest tests covering tool logic, guardrail parsing, and caching behavior, independent of live API calls
-- **RAGAS evaluation harness** — measures faithfulness, answer relevancy, and context precision against a fixed question set, so retrieval changes can be validated with numbers, not vibes
+- **Hybrid retrieval (FAISS + BM25)**: dense semantic search plus keyword search combined with LangChain's `EnsembleRetriever`.
+- **Source pages under answers**: each document-based answer shows `Sources retrieved: <file> (PDF pages ...)`, built from the pages of the chunks the retriever returned for that turn.
+- **Human-in-the-loop approval for web search**: every web search is paused with LangGraph's `interrupt()` and needs an explicit Approve or Reject.
+- **Tool failures do not crash the app**: if a tool raises (for example web search with no network), the error is returned to the model as a message instead of ending the run.
+- **Model errors become plain messages**: a quota, rate-limit or outage error from the LLM shows a short readable message in the chat instead of a traceback, and the conversation stays usable.
+- **Streamed responses** for normal turns, filtered to the correct graph node.
+- **Conversation persistence** with `SqliteSaver`, including turns that are paused for approval.
+- **Async PDF ingestion** on a background thread with live progress in the sidebar.
+- **In-memory query caching** of retrieval results.
+- **Swappable LLM backend**: the model is chosen in one function and can be overridden with an environment variable.
+- **Input guardrail**: a lightweight LLM classifier screens clearly abusive, illegal or spam input before the main flow.
+- **Automated tests** (pytest) covering the calculator, guardrail parsing, caching, source extraction, tool-failure handling, and the setup patch, all independent of live API calls.
+- **Evaluation harness** (RAGAS plus retrieval hit-rate scripts); see [Evaluation](#evaluation).
 
 ## Architecture
 
 ```
 START
-  │
-  ▼
-guardrail_node  ──(inappropriate query)──▶ END (refusal message)
-  │
-  ▼ (query passes)
-chat_node ◀────────────────────────────────┐
-  │                                         │
-  ├─(no tool needed)──▶ END                 │
-  │                                         │
-  ├─(wants web search)─▶ human_review_node  │
-  │                         │               │
-  │                         ├─approved──▶ tools ─┘
-  │                         └─rejected──▶ (back to chat_node with denial message)
-  │                                         │
-  └─(wants calculator / doc search)─▶ tools ┘
+  |
+  v
+guardrail_node --(inappropriate query)--> END (refusal message)
+  |
+  v (query passes)
+chat_node <-------------------------------+
+  |                                        |
+  |-(no tool needed)--> END                |
+  |                                        |
+  |-(wants web search)--> human_review_node|
+  |                         |-approved--> tools --+
+  |                         '-rejected--> back to chat_node with a denial message
+  |                                        |
+  '-(calculator / document search)--> tools
 ```
 
-The graph is built with **LangGraph**. `chat_node` is the only node that calls the LLM for a real response; `guardrail_node` runs a separate, cheap classification call before it. Only `duckduckgo_search` is routed through `human_review_node` — the calculator and document-retrieval tools are deterministic and internal, so they run without approval.
+The graph is built with LangGraph. `chat_node` is the only node that writes the real answer; `guardrail_node` runs a separate, cheap classification call first. Only `duckduckgo_search` goes through `human_review_node`; the calculator and the document-retrieval tool are deterministic and internal, so they run without approval.
 
 ## Tech stack
 
 | Layer | Choice | Why |
 |---|---|---|
-| Orchestration | [LangGraph](https://langchain-ai.github.io/langgraph/) | Explicit state machine with native support for human-in-the-loop interrupts |
+| Orchestration | [LangGraph](https://langchain-ai.github.io/langgraph/) | Explicit state machine with native human-in-the-loop interrupts |
 | LLM | Google Gemini (free tier) | No per-call cost during development |
-| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` (local) | Free, runs offline, no API dependency for retrieval |
-| Vector store | FAISS | Fast local similarity search, no external service required |
+| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` (local) | Free, offline, no API dependency for retrieval |
+| Vector store | FAISS | Fast local similarity search |
 | Lexical search | BM25 (`rank_bm25`) | Catches exact keyword matches dense embeddings can miss |
-| Persistence | SQLite via `SqliteSaver` | Zero-setup conversation and checkpoint storage |
+| Persistence | SQLite via `SqliteSaver` | Zero-setup conversation storage |
 | Web search | DuckDuckGo (`ddgs`) | No API key required |
-| Evaluation | [RAGAS](https://github.com/explodinggradients/ragas) | Standard, LLM-graded RAG evaluation metrics |
-| Observability | LangSmith | Trace-level visibility into every graph run |
-| Frontend | Streamlit | Fast to build, good fit for a demo-first project |
-| Testing | pytest | Standard, widely recognized |
+| Evaluation | [RAGAS](https://github.com/explodinggradients/ragas) | LLM-judged RAG metrics |
+| Observability | LangSmith | Trace-level view of every graph run |
+| Frontend | Streamlit | Fast to build |
+| Testing | pytest | Standard |
 
-## Key design decisions & trade-offs
+## Evaluation
 
-These are the choices I expect to be asked about in an interview, along with the reasoning behind each one.
+All numbers below come from runs of the scripts in this repo. They are small-sample results and are labelled with their limits.
 
-**Hybrid retrieval tuning — reweighting alone doesn't work.**
-`EnsembleRetriever` merges the *union* of results from each retriever and only re-ranks by weight; it doesn't drop low-weight candidates. I initially assumed changing `weights=[0.5,0.5]` to `weights=[0.8,0.2]` would filter out noisy BM25 matches — it didn't, since the same candidate set surfaced under both configurations. The BM25 sub-retriever was surfacing an entire "Exercises" section of the source PDF as false-positive keyword matches. The actual fix was reducing BM25's own `k` (`bm25_k=2`) at the retrieval source, not adjusting the ensemble weights. This is documented because it's a good example of verifying a fix against real output rather than assuming a plausible-sounding change worked.
+### Question set
 
-**Human-in-the-loop gates only web search, not every tool.**
-Only `duckduckgo_search` requires explicit approval. The calculator and document-retrieval tool are deterministic, don't touch external/untrusted sources, and gating them would just add friction with no safety benefit. HITL is applied where it actually matters: the one tool making an uncontrolled external network call.
+24 hand-checked questions over three different documents: a machine-learning textbook (10 questions), a research paper (8) and a practical project guide (6). Every question has a ground-truth answer and an `evidence` phrase copied from the PDF; `verify_questions.py` checks that each phrase really appears in the extracted text. Each question runs on its own fresh conversation thread, and the retrieved context that is scored is the chunks the chatbot's own `rag_tool` calls returned, not a separate re-retrieval.
 
-**Guardrails are prompt-based, not a separate trained classifier.**
-Input filtering is a single cheap LLM call that returns YES/NO before the main chat flow runs; output groundedness (not fabricating facts beyond retrieved context) is enforced via system-prompt instructions rather than a post-hoc verification model. This is simpler to build, explain, and reason about than a dedicated classifier, at the cost of being less robust than a purpose-trained model — an accepted trade-off for a project at this scope.
+### End-to-end quality (RAGAS, hybrid retrieval, single run)
 
-**Caching covers retrieval, not final LLM output.**
-`rag_tool`'s cache stores retrieved chunks keyed by `(thread_id, query)`, not the LLM's generated answer. Caching final answers raises staleness questions (e.g., if the system prompt changes, a cached answer could reflect old instructions) that outweigh the benefit at this scale — so caching was deliberately scoped to the deterministic part of the pipeline only.
+| Document | Faithfulness | Answer relevancy | Context precision |
+|---|---|---|---|
+| Textbook (10 q) | 1.0 | 0.80 | 0.72 |
+| Research paper (8 q) | 1.0 | 0.90 | 0.84 |
+| Project guide (6 q) | 1.0 | 0.94 | 0.70 |
+| **All 24** | **1.0** | **0.87** | **0.75** |
 
-**Single document per conversation thread, with an explicit replace confirmation.**
-Uploading a second PDF to a thread that already has one loaded doesn't silently overwrite it — the UI shows an explicit "this will replace your current document" warning requiring a second confirmation click. Supporting multiple simultaneous documents per thread was considered and deliberately deferred: it adds real complexity (merged retrieval across documents, cache-key changes, UI for showing which documents are active) that isn't proportional to its interview value for this project's scope. One document per conversation is a clean, easy-to-defend boundary; the confirmation step exists specifically so that boundary doesn't look like a bug during a live demo.
+How to read this:
+- **Faithfulness is saturated at 1.0.** Answers stayed inside the retrieved text, which is what the system prompt asks for, but a metric at its ceiling cannot separate configurations, so it is not used to compare them.
+- The questions are single-fact lookups, and 7 of the 10 textbook questions were written from passages that earlier runs had already retrieved, so the set is on the easy side.
+- One run, judged by the same model family that writes the answers; treat differences of a few hundredths as noise.
 
-**Streaming covers new chat turns; the approval-resume path does not.**
-Token streaming was added for normal conversation turns via `chatbot.stream()`, but resuming after an approve/reject decision still uses a blocking call. Resumed responses are typically short, and this keeps the two code paths independently simple rather than merging streaming logic into the interrupt-resume flow for marginal benefit.
+### Retrieval comparison (no LLM calls, deterministic)
 
-**Local embeddings over a paid embeddings API.**
-`sentence-transformers/all-MiniLM-L6-v2` runs locally with no per-call cost and no external dependency for the retrieval step — a deliberate budget-conscious choice that also removes one more network dependency from the critical path.
+Each raw question is used as the query, and a question counts as a hit if a retrieved chunk contains its evidence phrase.
+
+| Config | Hit rate | MRR |
+|---|---|---|
+| FAISS only, k=6 | 18/24 | 0.503 |
+| FAISS only, k=4 | 18/24 | 0.503 |
+| **Hybrid (k=4 + BM25 k=2), current** | **20/24** | 0.510 |
+
+Hybrid found the evidence for two more questions; ranking quality was about equal. This measures retrieval only: it does not measure how much irrelevant text comes along with the right chunk. In the app the model rewrites queries and may search more than once, so the in-app hit rate was higher than this stricter test (23/24 in the full run).
+
+### Chunk size and a noise filter (measured, not adopted)
+
+Scored by whether any retrieved chunk comes from a page that contains the evidence, which is fair across chunk sizes.
+
+| Config | Page hit rate | Noise share of retrieved chunks |
+|---|---|---|
+| **1000 / 200 (current)** | **22/24** | 0.7% |
+| 1000 / 200 + noise filter | 22/24 | 0.0% |
+| 500 / 100 | 20/24 | 0.0% |
+| 1500 / 300 | 20/24 | 1.5% |
+| 1000 / 0 (no overlap) | 21/24 | 2.4% |
+
+The current 1000/200 setting scored best, so it stays. A filter that drops table-of-contents, index and divider chunks (about 5% of the textbook) cut retrieved noise from 0.7% to 0% with the same hit rate; it was not adopted because the gain is marginal and it adds risk on layouts it has not been tested on. The code is in `chunk_filter.py` with tests.
+
+### Guardrail accuracy
+
+On a hand-written set of 40 queries (20 that should be allowed, 20 that should be blocked): all 20 allowed queries were allowed, and 18 of 20 blocked queries were blocked (all abusive, illegal-request and promotional-spam cases). The two misses were gibberish strings (`asdf asdf ...`, a run of `a`s), which the deliberately permissive prompt does not treat as spam. The cases are mine, so they are on the easy side.
+
+### Cache speed (retrieval step only)
+
+A cache hit takes about 0.07 ms against a median of about 14 ms uncached on the 2,339-chunk textbook (about 190x over 10 queries). Across three test documents the ratio ranged from 65x to 432x, so treat it as an order-of-magnitude figure. This is the retrieval step only: the Gemini call (typically 1 to 4 s) dominates real response time, and the cache does not store LLM output.
+
+## Key design decisions and trade-offs
+
+**Hybrid retrieval tuning: reweighting alone does not work.** `EnsembleRetriever` merges the union of each retriever's results and only re-ranks by weight. Changing `weights=[0.5, 0.5]` to `[0.8, 0.2]` left the candidate set unchanged. The BM25 half was surfacing an "Exercises" section as keyword false positives, and the fix was reducing BM25's own `k` (`bm25_k=2`), not the weights.
+
+**Human-in-the-loop gates only web search.** Only `duckduckgo_search` needs approval. The calculator and document retrieval are deterministic and internal; gating them would add friction with no safety benefit.
+
+**Guardrails are prompt-based.** Input filtering is one cheap YES/NO LLM call, and groundedness is enforced by the system prompt rather than a separate verifier. Simpler to build and explain, at the cost of being less robust than a purpose-trained model.
+
+**Caching covers retrieval, not LLM output.** Cached answers could go stale when the system prompt changes, so only the deterministic retrieval step is cached.
+
+**One document per conversation thread, with a replace confirmation.** Uploading a second PDF to a thread that already has one asks for explicit confirmation instead of silently overwriting. Multiple documents per thread were deliberately deferred.
+
+**Streaming covers new turns; the approval-resume path does not.** Resumed responses are short, and keeping the two code paths separate keeps each one simple.
+
+**Local embeddings.** `all-MiniLM-L6-v2` runs locally with no per-call cost and removes one network dependency from the retrieval path.
 
 ## Project structure
 
 ```
 RAG_Chat_Bot/
-├── langgraph_backend.py     # Graph definition: nodes, routing, tools, guardrails
-├── streamlit_frontend.py    # Streamlit UI: chat, PDF upload, approval flow, streaming
-├── rag_utils.py              # PDF ingestion, hybrid retriever, rag_tool, caching
-├── llm_config.py              # Single source of truth for LLM selection
-├── evaluation.py               # RAGAS evaluation harness
-├── test_calculator.py          # Unit tests: calculator tool
-├── test_guardrail.py            # Unit tests: guardrail YES/NO parsing (mocked LLM)
-├── test_rag_caching.py           # Unit tests: rag_tool caching behavior (mocked retriever)
+├── langgraph_backend.py       # Graph: nodes, routing, tools, guardrail, tool-failure handling
+├── streamlit_frontend.py      # Streamlit UI: chat, PDF upload, approval flow, streaming, sources
+├── rag_utils.py               # PDF ingestion, hybrid retriever, rag_tool, caching
+├── source_utils.py            # Extracts and formats the pages a turn's answer was retrieved from
+├── error_utils.py             # Turns model errors into short plain-language messages
+├── llm_config.py              # Single place that selects the LLM
+├── patch_ragas.py             # One-command fix for the ragas import problem (see Setup)
+├── evaluation.py              # RAGAS evaluation over eval_questions/
+├── eval_questions/            # Hand-checked questions with evidence phrases (one file per document)
+├── verify_questions.py        # Confirms every evidence phrase exists in its PDF
+├── compare_retrieval.py       # FAISS-only vs hybrid retrieval comparison
+├── hit_rate.py                # Evidence hit rate for a saved evaluation run
+├── compare_chunking.py        # Chunk size and noise-filter comparison
+├── chunk_filter.py            # Contents/index/divider chunk detector (measured, not adopted)
+├── bench_cache.py             # Cache timing benchmark
+├── guardrail_eval.py          # Guardrail accuracy test
+├── guardrail_cases.json       # The 40 guardrail test queries
+├── test_*.py                  # pytest suites
 ├── requirements.txt
 └── .gitignore
 ```
 
 ## Setup
 
-**Requirements:** Python 3.11+ (developed on 3.14), a free [Google AI Studio](https://aistudio.google.com/) API key.
+**Requirements:** Python 3.11+ (developed on 3.14) and a free [Google AI Studio](https://aistudio.google.com/) API key.
 
 ```bash
-# Clone the repo
 git clone https://github.com/d4t4forge-debugX/RAG_Chat_Bot.git
 cd RAG_Chat_Bot
 
-# Create and activate a virtual environment
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-# Install dependencies
 pip install -r requirements.txt
+python patch_ragas.py
 ```
+
+**Known setup issue:** `ragas==0.3.9` imports a module that no longer exists in current `langchain-community`, so `import ragas` fails on a fresh install. `python patch_ragas.py` applies a small, idempotent fix to the installed package, keeps a backup, and checks that `import ragas` works afterwards. Only the evaluation scripts need ragas; the app itself does not.
 
 Create a `.env` file in the project root:
 
@@ -129,10 +185,10 @@ Create a `.env` file in the project root:
 GOOGLE_API_KEY=your_gemini_api_key_here
 ```
 
-(Optional) To use a different Gemini model without touching any code:
+Optional, to use a different Gemini model without editing code:
 
 ```
-LLM_MODEL=gemini-2.5-flash
+LLM_MODEL=your_model_name
 LLM_THINKING_LEVEL=low
 ```
 
@@ -142,7 +198,7 @@ LLM_THINKING_LEVEL=low
 streamlit run streamlit_frontend.py
 ```
 
-Open the local URL Streamlit prints in your terminal, upload a PDF from the sidebar, and start asking questions.
+Open the local URL Streamlit prints, upload a PDF from the sidebar, and ask questions.
 
 ## Running the tests
 
@@ -150,41 +206,49 @@ Open the local URL Streamlit prints in your terminal, upload a PDF from the side
 pytest -v
 ```
 
-15 tests covering the calculator tool, guardrail response parsing, and `rag_tool`'s caching logic — all run without hitting any real LLM or retriever, using mocks where an external call would otherwise be required.
+44 tests currently pass, covering the calculator, guardrail parsing, caching, source extraction, tool-failure handling, the setup patch, the chunk filter, error messages, and the UI's handling of model failures. They use mocks and fake messages, so they make no LLM calls and need no PDFs.
 
 ## Running the evaluation
 
+The evaluation PDFs are not included in the repository (the textbook is copyrighted, and the other two are third-party documents). `eval_questions/*.json` refer to them by file name; to reproduce the numbers, place equivalent PDFs in the project root under those names, then:
+
 ```bash
-python evaluation.py
+python verify_questions.py            # every evidence phrase exists in its PDF
+python evaluation.py --label hybrid   # RAGAS run, saved under eval_runs/
+python hit_rate.py                    # evidence hit rate of the latest run
+python compare_retrieval.py           # FAISS-only vs hybrid
+python compare_chunking.py            # chunk sizes and the noise filter
+python bench_cache.py                 # cache timing
+python guardrail_eval.py              # guardrail accuracy
 ```
 
-Runs a fixed set of test questions against a freshly-ingested PDF and scores the results with RAGAS. Current baseline (hybrid retrieval, `bm25_k=2`, `weights=[0.7, 0.3]`):
+`evaluation.py`, `guardrail_eval.py` and the other scripts that call the model make many requests. On the Gemini free tier (500 requests per day and 15 per minute for the default model at the time of writing) a full evaluation can use most of a day's quota.
 
-| Metric | Score |
-|---|---|
-| Faithfulness | 0.83 – 0.93 (varies run-to-run; see note below) |
-| Answer relevancy | 0.81 – 0.88 |
-| Context precision | 0.53 (stable across runs) |
+## Known limitations
 
-Faithfulness and answer relevancy vary slightly between runs — this was investigated and traced to RAGAS's own LLM-judge noise on a small (n=3) evaluation set, confirmed by re-running the evaluation independently and observing that context precision (which doesn't depend on judge subjectivity) stayed identical both times.
+Documented rather than left implicit:
 
-## Known limitations (deliberately out of scope)
-
-Documented explicitly rather than left implicit, since a project with zero acknowledged limitations is less credible than one with clearly reasoned boundaries:
-
-- **No multi-user support / no authentication** — this is a single-user local/demo project, not a production multi-tenant system.
-- **In-memory per-thread state resets on restart** — retrievers and query caches are not persisted to disk; a redeploy clears them. Acceptable for a demo project; a production version would use a persistent vector store.
-- **One document per conversation thread** — see [Design Decisions](#key-design-decisions--trade-offs) above.
-- **No semantic chunking** — uses fixed-size recursive character splitting rather than embedding-aware chunk boundaries; simpler and sufficient for this scope.
-- **No cost/quota-aware model routing** — the LLM is fixed per environment variable, not dynamically switched based on usage or cost.
+- **No authentication or multi-user support**; this is a single-user local project.
+- **In-memory per-thread state resets on restart**: retrievers and query caches are not persisted. A production version would use a persistent vector store.
+- **One document per conversation thread.**
+- **Sources are shown for live answers only**: they are not restored when a saved thread is reloaded, and a follow-up answered from earlier conversation text (with no new retrieval) shows no sources. The label says "retrieved", not "used": some retrieved pages may not have contributed to the answer.
+- **LLM errors are reported, not retried**: a quota, rate-limit or outage error shows a short plain-language message in the chat (tested with simulated errors, not yet checked against a live outage) and the conversation stays usable. Nothing retries automatically, and the free-tier daily quota (500 requests for the default model at the time of writing) can run out during heavy evaluation.
+- **No timeout on LLM calls**: one call hung once during testing.
+- **Web search is best-effort**: the DuckDuckGo wrapper returned an off-topic result once and failed on some networks.
+- **The guardrail is deliberately permissive**: it blocks clearly abusive, illegal or spam input and does not block gibberish.
+- **No runtime hallucination gate**: groundedness relies on the system prompt plus offline evaluation, not a live verifier.
+- **Evaluation limits**: 24 questions, mostly single-fact lookups, one run per measurement, an LLM judge from the same model family as the answerer, and a question set written by the author.
+- **Not implemented, by choice**: semantic chunking, cost-aware model routing, multiple documents per thread.
 
 ## Roadmap
 
-- [ ] README (this file)
-- [ ] Resume/portfolio writeup
-- [ ] Deploy to Streamlit Community Cloud
-- [ ] Re-verify all features against the live deployed app
+- [x] Hybrid retrieval, human-in-the-loop approval, persistence, streaming, async ingestion, caching
+- [x] Larger evaluation set, retrieval comparisons, source pages in answers
+- [x] README and project notes
+- [ ] Harder evaluation questions (unanswerable and multi-passage)
+- [x] Friendly handling of LLM errors in the UI
+- [ ] Deployment (optional)
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Chosen for simplicity and because it places no restrictions on reuse, which fits a public portfolio project.
+MIT, see [LICENSE](LICENSE).

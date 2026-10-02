@@ -1,0 +1,38 @@
+[
+  {
+    "doc": "test4.pdf",
+    "question": "Which project does the guide recommend starting with if you are new to this, and why?",
+    "ground_truth": "Project 04, Groundtruth (retrieval evaluation), because it is the shortest and it makes every other project on the list measurable.",
+    "evidence": "Start with project 04"
+  },
+  {
+    "doc": "test4.pdf",
+    "question": "According to the guide, when does a project count?",
+    "ground_truth": "A project only counts when it has an eval, a number, and a tradeoff you can defend out loud.",
+    "evidence": "a project only counts when it has an eval, a number, and a tradeoff"
+  },
+  {
+    "doc": "test4.pdf",
+    "question": "What is the trap in the Warmstart LLM caching project?",
+    "ground_truth": "Keying the cache on the user question alone: two customers with different order histories get the same answer, which ships a data leak instead of an optimisation.",
+    "evidence": "Keying the cache on the user question alone"
+  },
+  {
+    "doc": "test4.pdf",
+    "question": "In the Groundtruth project, when should the CI regression harness fail a pull request?",
+    "ground_truth": "When recall@10 drops by more than a point.",
+    "evidence": "fails the pull request when recall@10 drops by more than a point"
+  },
+  {
+    "doc": "test4.pdf",
+    "question": "What does the guide say is the real control against prompt injection in the Doorman project?",
+    "ground_truth": "Limiting what the agent is allowed to do once it is fooled, rather than filtering phrases like ignoring previous instructions.",
+    "evidence": "limiting what the agent is allowed to do once it is fooled"
+  },
+  {
+    "doc": "test4.pdf",
+    "question": "What should be the headline result for the Slotfill LoRA finetuning project?",
+    "ground_truth": "Eval numbers, never training loss.",
+    "evidence": "Eval numbers, never training loss, as the headline result"
+  }
+]

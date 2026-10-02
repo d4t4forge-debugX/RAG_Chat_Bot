@@ -3,6 +3,8 @@ from langgraph_backend import chatbot, retrieve_all_threads
 from rag_utils import start_ingestion_async, get_ingestion_status, get_retriever_for_thread
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from langgraph.types import Command
+from source_utils import extract_sources, format_sources
+from error_utils import friendly_error_message
 import uuid
 import os
 import time
@@ -261,6 +263,8 @@ for thread_id in st.session_state["chat_threads"][::-1]:
 for message in st.session_state["message_history"]:
     with st.chat_message(message["role"]):
         st.text(extract_text(message["content"]))
+        if message.get("sources"):
+            st.caption(message["sources"])
 
 CONFIG = {
     "configurable": {"thread_id": st.session_state["thread_id"]},
@@ -278,9 +282,20 @@ def handle_graph_result(result):
     else:
         st.session_state["pending_interrupt"] = None
         answer = result["messages"][-1].content
+        sources_text = format_sources(extract_sources(result["messages"]))
         st.session_state["message_history"].append(
-            {"role": "assistant", "content": extract_text(answer)}
+            {"role": "assistant", "content": extract_text(answer), "sources": sources_text}
         )
+
+# resumes the paused graph with the user's decision; a model or tool failure shows a friendly message and keeps the approval card
+def resume_with(decision):
+    try:
+        result = chatbot.invoke(Command(resume=decision), config=CONFIG)
+    except Exception as error:
+        st.error(friendly_error_message(error))
+        return
+    handle_graph_result(result)
+    st.rerun()
 
 # generator for st.write_stream(): streams only chat_node's assistant tokens and accumulates the full text as it goes
 def stream_chat_turn(user_input, config, accumulated_holder):
@@ -314,14 +329,10 @@ if st.session_state["pending_interrupt"] is not None:
     col1, col2 = st.columns(2)
     with col1:
         if st.button("✅ Approve"):
-            result = chatbot.invoke(Command(resume="approve"), config=CONFIG)
-            handle_graph_result(result)
-            st.rerun()
+            resume_with("approve")
     with col2:
         if st.button("❌ Reject"):
-            result = chatbot.invoke(Command(resume="reject"), config=CONFIG)
-            handle_graph_result(result)
-            st.rerun()
+            resume_with("reject")
 
 else:
     # normal turn: take chat input, stream the assistant's reply live, then check whether it paused on an interrupt
@@ -333,8 +344,15 @@ else:
             st.text(user_input)
 
         accumulated_holder = [""]
-        with st.chat_message("assistant"):
-            st.write_stream(stream_chat_turn(user_input, CONFIG, accumulated_holder))
+        try:
+            with st.chat_message("assistant"):
+                st.write_stream(stream_chat_turn(user_input, CONFIG, accumulated_holder))
+        except Exception as error:
+            st.session_state["message_history"].append(
+                {"role": "assistant", "content": "⚠️ " + friendly_error_message(error)}
+            )
+            st.session_state["pending_interrupt"] = None
+            st.rerun()
 
         state = chatbot.get_state(config=CONFIG)
         pending = None
@@ -348,8 +366,9 @@ else:
             st.session_state["pending_interrupt"] = pending
         else:
             st.session_state["pending_interrupt"] = None
+            sources_text = format_sources(extract_sources(state.values.get("messages", [])))
             st.session_state["message_history"].append(
-                {"role": "assistant", "content": accumulated_holder[0]}
+                {"role": "assistant", "content": accumulated_holder[0], "sources": sources_text}
             )
 
         st.rerun()

@@ -565,9 +565,8 @@ below was measured or tested in this session. Supersedes older statements where 
 1. After the Gemini daily quota resets: one live check of the app (a normal question, a deliberately failed one such
    as Wi-Fi off, then another normal question) to see the state after a failed turn; optionally add about 6 harder
    evaluation questions (about 4 unanswerable, 2 multi-passage) and score the unanswerable ones by refusal wording.
-2. The single git commit and push (nothing is committed from this session yet): re-add files explicitly (many show
-   `AM`), review `git diff --cached` per file, decide which helper scripts to include (`show_noise.py` and
-   `show_noise_detail.py` are probably local-only), ignore `files.zip`, then commit README.md and PROJECT_NOTES.md.
+2. DONE: committed and pushed as 6849eca (26 files). `show_noise.py`, `show_noise_detail.py` and
+   `files.zip` were deliberately left untracked.
 3. Optional: `git grep -I -l "lsv2_" $(git rev-list --all)`; a timeout on LLM calls (one call hung once); sources on
    thread reload; deployment (only if a link will actually be shared).
 
@@ -630,14 +629,14 @@ noise filter, a different chunk size, CI, screenshots and a demo video.
   attached summary at face value.
 
 ## Continue from here
-The flaws list is finished except for the live check and the commit (see Open Issues). This session rebuilt the
+The flaws list is finished except for the live check (see Open Issues). Committed and pushed as 6849eca. This session rebuilt the
 evaluation (24 verified questions, 3 documents, chatbot-actual contexts), compared retrieval settings (hybrid 20/24 vs
 FAISS 18/24 on raw questions; chunk size 1000/200 kept; noise filter measured but not adopted), measured the guardrail
 (38/40) and the cache (retrieval step only), added source pages under answers, tool-failure and model-error handling,
 a one-command ragas patch, and rewrote the README. 44 tests pass.
 
-**Next session should**: wait for the Gemini quota, run the live check, optionally add the harder questions, then do
-the single commit (re-add files, review `git diff --cached`).
+**Next session should**: when the Gemini quota is back, run the live check (and optionally add the harder
+questions); any change goes in a small follow-up commit.
 
 Rohit was explicit that new RAG tools (weather, stocks, etc.) are not wanted, that a runtime hallucination-detection
 layer is a deliberate "not now", and that he does not want screenshots or videos in the repo. Do not propose those again.

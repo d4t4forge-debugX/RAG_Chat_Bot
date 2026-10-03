@@ -52,6 +52,7 @@ def clear_pycache(ragas_dir):
                 shutil.rmtree(os.path.join(root, d), ignore_errors=True)
 
 
+# applies the patch to the installed ragas (with a one-time backup), then checks that "import ragas" works
 def main():
     path = locate_base_py()
     if path is None or not os.path.exists(path):

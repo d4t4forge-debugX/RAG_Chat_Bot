@@ -20,6 +20,7 @@ def classify(text, attempts=3):
     return "error"
 
 
+# classifies every case in guardrail_cases.json, prints catch rate, correct-allow rate and misses by category, and saves the results
 def main():
     with open("guardrail_cases.json") as f:
         cases = json.load(f)

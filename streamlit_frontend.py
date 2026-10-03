@@ -205,37 +205,6 @@ else:
 # not just the one we're currently looking at.
 cleanup_finished_ingestions()
 
-# Poll for in-progress ingestion on every rerun (this is what makes it "async"
-# from the UI's perspective — Streamlit reruns the whole script on a timer
-# while we're polling, so the user sees live progress instead of one frozen
-# blocking spinner).
-# NOTE: this whole block checks a session_state key ("ingesting_temp_path", singular)
-# that is never set anywhere in this file anymore — it is dead/unreachable code left
-# over from the old single-thread tracking design; flagged above, not removed here
-if "ingesting_temp_path" in st.session_state:
-    status = get_ingestion_status(current_thread_id)
-
-    if status is None:
-        pass  # thread hasn't posted a status yet, will show up next rerun
-    elif status["status"] == "running":
-        st.sidebar.info(f"⏳ {status['stage']}")
-        time.sleep(0.5)
-        st.rerun()
-    elif status["status"] == "done":
-        st.sidebar.success(f"Indexed {uploaded_pdf.name if uploaded_pdf else ''} ({status['result']['chunks']} chunks)")
-        try:
-            os.remove(st.session_state["ingesting_temp_path"])
-        except OSError:
-            pass
-        del st.session_state["ingesting_temp_path"]
-    elif status["status"] == "error":
-        st.sidebar.error(f"Ingestion failed: {status['error']}")
-        try:
-            os.remove(st.session_state["ingesting_temp_path"])
-        except OSError:
-            pass
-        del st.session_state["ingesting_temp_path"]
-
 st.sidebar.divider()
 st.sidebar.header("My Conversations")
 

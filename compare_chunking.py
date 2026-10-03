@@ -45,7 +45,7 @@ def evidence_pages(pages, phrase):
     return {p.metadata.get("page") for p in pages if target in normalize(p.page_content)}
 
 
-# runs one config over every question of one document; returns per-question (hit, noise share)
+# runs one config over every question of one document; returns per-question (hit, noise share, chunks returned) and the chunk count
 def run_config(pages, questions, chunk_size, overlap, use_filter):
     chunks = split_pages(pages, chunk_size, overlap)
     if use_filter:
@@ -62,6 +62,7 @@ def run_config(pages, questions, chunk_size, overlap, use_filter):
     return rows, len(chunks)
 
 
+# compares five chunking setups over all documents and prints per-document and overall page hit rate and noise share
 def main():
     configs = {
         "current (1000/200, no filter)": (1000, 200, False),

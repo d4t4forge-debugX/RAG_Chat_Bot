@@ -20,7 +20,7 @@ def get_llm():
     Reads LLM_MODEL / LLM_THINKING_LEVEL from .env if set, otherwise
     falls back to the defaults above. This means you can override the
     model for a single run without editing code, e.g.:
-        LLM_MODEL=gemini-2.5-flash python langgraph_backend.py
+        LLM_MODEL=<model name from your AI Studio dashboard> python langgraph_backend.py
     """
     model_name = os.getenv("LLM_MODEL", DEFAULT_MODEL)
     thinking_level = os.getenv("LLM_THINKING_LEVEL", DEFAULT_THINKING_LEVEL)

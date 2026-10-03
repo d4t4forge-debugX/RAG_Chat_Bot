@@ -36,7 +36,7 @@ Deployment: not yet done (Streamlit Community Cloud, planned last).
   `{messages: Annotated[list[BaseMessage], add_messages], blocked: bool}`.
   Tools bound: `search_tool` (DuckDuckGo), `calculator`, `rag_tool`.
   `checkpointer` = `SqliteSaver` on `chatbot.db`. `retrieve_all_threads()`
-  helper. `__main__` block runs a terminal HITL smoke test.
+  helper. It has no `__main__` block (an unfinished one was removed on 2026-10-03).
   Unused `tools_condition` import removed (cosmetic cleanup, custom
   `route_after_chat`/`route_after_guardrail` were already doing the real
   routing).

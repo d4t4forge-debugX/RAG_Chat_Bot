@@ -523,8 +523,7 @@ below was measured or tested in this session. Supersedes older statements where 
 - Model errors: `error_utils.py` (`friendly_error_message`: daily quota, per-minute limit, unavailable, network, generic;
   strips raw API details, shortens retry time). `streamlit_frontend.py`: `resume_with()` helper for Approve/Reject (keeps
   the approval card on failure) and a try/except around `st.write_stream` that appends a "⚠️" assistant message.
-  `test_error_utils.py` (6) and `test_ui_errors.py` (2, Streamlit `AppTest` with a mocked chatbot). NOT yet checked live:
-  what happens on the next question after a failed turn (the user message is saved without an answer).
+  `test_error_utils.py` (6) and `test_ui_errors.py` (2, Streamlit `AppTest` with a mocked chatbot). Checked live on 2026-10-03: with the network off a question showed the warning message and no traceback, and the next question after reconnecting answered normally (only the no-network case was tried live).
 - `patch_ragas.py`: idempotent patch for the ragas==0.3.9 import bug; finds `ragas/llms/base.py` without importing
   ragas, writes a one-time `.orig` backup, clears `__pycache__`, verifies `import ragas`. `test_patch_ragas.py` (3).
   Proven end to end: force-reinstalled ragas==0.3.9 (import broke), ran the script (import worked).
@@ -629,14 +628,13 @@ noise filter, a different chunk size, CI, screenshots and a demo video.
   attached summary at face value.
 
 ## Continue from here
-The flaws list is finished except for the live check (see Open Issues). Committed and pushed as 6849eca. This session rebuilt the
+The flaws list is finished and the live check passed on 2026-10-03. Committed and pushed as 6849eca. This session rebuilt the
 evaluation (24 verified questions, 3 documents, chatbot-actual contexts), compared retrieval settings (hybrid 20/24 vs
 FAISS 18/24 on raw questions; chunk size 1000/200 kept; noise filter measured but not adopted), measured the guardrail
 (38/40) and the cache (retrieval step only), added source pages under answers, tool-failure and model-error handling,
 a one-command ragas patch, and rewrote the README. 44 tests pass.
 
-**Next session should**: when the Gemini quota is back, run the live check (and optionally add the harder
-questions); any change goes in a small follow-up commit.
+**Next session should**: optionally add the harder questions; the live check is done.
 
 Rohit was explicit that new RAG tools (weather, stocks, etc.) are not wanted, that a runtime hallucination-detection
 layer is a deliberate "not now", and that he does not want screenshots or videos in the repo. Do not propose those again.

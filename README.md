@@ -232,7 +232,7 @@ Documented rather than left implicit:
 - **In-memory per-thread state resets on restart**: retrievers and query caches are not persisted. A production version would use a persistent vector store.
 - **One document per conversation thread.**
 - **Sources are shown for live answers only**: they are not restored when a saved thread is reloaded, and a follow-up answered from earlier conversation text (with no new retrieval) shows no sources. The label says "retrieved", not "used": some retrieved pages may not have contributed to the answer.
-- **LLM errors are reported, not retried**: a quota, rate-limit or outage error shows a short plain-language message in the chat (tested with simulated errors, not yet checked against a live outage) and the conversation stays usable. Nothing retries automatically, and the free-tier daily quota (500 requests for the default model at the time of writing) can run out during heavy evaluation.
+- **LLM errors are reported, not retried**: a quota, rate-limit or outage error shows a short plain-language message in the chat (tested with simulated errors, and checked live once by turning the network off mid-session: the chat showed the message and the next question answered normally) and the conversation stays usable. Nothing retries automatically, and the free-tier daily quota (500 requests for the default model at the time of writing) can run out during heavy evaluation.
 - **No timeout on LLM calls**: one call hung once during testing.
 - **Web search is best-effort**: the DuckDuckGo wrapper returned an off-topic result once and failed on some networks.
 - **The guardrail is deliberately permissive**: it blocks clearly abusive, illegal or spam input and does not block gibberish.

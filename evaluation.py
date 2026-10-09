@@ -22,10 +22,10 @@ from rag_utils import embeddings as rag_embeddings
 METRIC_NAMES = ["faithfulness", "answer_relevancy", "llm_context_precision_with_reference"]
 
 
-# reads every eval_questions/*.json file into one list, optionally keeping only the first N per file or only questions containing a --match phrase
-def load_questions(limit_per_doc=None, match=None):
+# reads every <questions_dir>/*.json file into one list, optionally keeping only the first N per file or only questions containing a --match phrase
+def load_questions(limit_per_doc=None, match=None, questions_dir="eval_questions"):
     questions = []
-    for path in sorted(glob.glob("eval_questions/*.json")):
+    for path in sorted(glob.glob(f"{questions_dir}/*.json")):
         with open(path) as f:
             items = json.load(f)
         if limit_per_doc:
@@ -33,7 +33,8 @@ def load_questions(limit_per_doc=None, match=None):
         questions.extend(items)
     if match:
         questions = [q for q in questions if any(m.lower() in q["question"].lower() for m in match)]
-    return questions
+    # unanswerable questions have no correct context to score; eval_hard.py checks those for a refusal instead
+    return [q for q in questions if q.get("type") != "unanswerable"]
 
 
 # ingests each distinct PDF once and returns {pdf filename: base thread_id holding its retriever}
@@ -174,13 +175,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit-per-doc", type=int, default=None,
                         help="only use the first N questions from each question file (cheap smoke test)")
+    parser.add_argument("--questions-dir", default="eval_questions",
+                        help="folder of question files to run (e.g. eval_questions_energy)")
     parser.add_argument("--match", nargs="+", default=None,
                         help="only run questions containing any of these phrases (cheap targeted re-check)")
     parser.add_argument("--label", default="hybrid_k4_bm25k2",
                         help="name for this run's configuration, used in the output filename")
     args = parser.parse_args()
 
-    questions = load_questions(args.limit_per_doc, args.match)
+    questions = load_questions(args.limit_per_doc, args.match, args.questions_dir)
     print(f"Loaded {len(questions)} questions.\n")
 
     base_threads, chunk_counts = ingest_documents(questions)

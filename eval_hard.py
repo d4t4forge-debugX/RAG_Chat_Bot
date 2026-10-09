@@ -17,10 +17,10 @@ def normalize(text):
     return " ".join(text.split()).lower()
 
 
-# reads every question in eval_questions_hard/*.json into one list
-def load_hard_questions():
+# reads every question in <questions_dir>/*.json into one list (default: the hard set)
+def load_hard_questions(questions_dir="eval_questions_hard"):
     questions = []
-    for path in sorted(glob.glob("eval_questions_hard/*.json")):
+    for path in sorted(glob.glob(f"{questions_dir}/*.json")):
         with open(path) as f:
             questions.extend(json.load(f))
     return questions
@@ -49,9 +49,10 @@ def evidence_coverage(evidence, contexts):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--label", default="baseline", help="name for this run, used in the output filename")
+    parser.add_argument("--questions-dir", default="eval_questions_hard", help="folder of question files to run")
     args = parser.parse_args()
 
-    questions = load_hard_questions()
+    questions = load_hard_questions(args.questions_dir)
     print(f"Loaded {len(questions)} hard questions.\n")
     base_threads, _ = ingest_documents(questions)
     print()
@@ -86,17 +87,18 @@ def main():
         time.sleep(PAUSE_SECONDS)
 
     unanswerable = [r for r in records if r["type"] == "unanswerable" and r["status"] == "ok"]
-    multi = [r for r in records if r["type"] == "multi_passage" and r["status"] == "ok"]
+    # every answerable question (single-fact or multi-passage) is scored on whether ALL its evidence was retrieved
+    multi = [r for r in records if r["type"] != "unanswerable" and r["status"] == "ok"]
     refused = sum(1 for r in unanswerable if r["refused"])
     full_evidence = sum(1 for r in multi if r["evidence_found"].split("/")[0] == r["evidence_found"].split("/")[1])
 
     print("=== Hard set results ===")
     print(f"Unanswerable refused correctly: {refused}/{len(unanswerable)}")
-    print(f"Multi-passage with ALL evidence retrieved: {full_evidence}/{len(multi)}")
+    print(f"Answerable questions with ALL evidence retrieved: {full_evidence}/{len(multi)}")
     print("Read each multi-passage answer above against its ground truth before trusting these numbers.")
 
     os.makedirs("eval_runs", exist_ok=True)
-    out_path = f"eval_runs/hard_{args.label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    out_path = f"eval_runs/{os.path.basename(args.questions_dir)}_{args.label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(out_path, "w") as f:
         json.dump({"refused": f"{refused}/{len(unanswerable)}",
                    "multi_full_evidence": f"{full_evidence}/{len(multi)}",

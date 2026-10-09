@@ -1,0 +1,79 @@
+[
+  {
+    "doc": "demo_corpus/energy/osha_1910_147.pdf",
+    "type": "single",
+    "question": "How often must the employer inspect its energy control procedure under the lockout/tagout standard?",
+    "ground_truth": "At least annually, to ensure that the procedure and the requirements of the standard are being followed.",
+    "evidence": ["at least annually to ensure that the"]
+  },
+  {
+    "doc": "demo_corpus/energy/osha_1910_147.pdf",
+    "type": "single",
+    "question": "Who is supposed to remove a lockout or tagout device from an energy isolating device?",
+    "ground_truth": "The employee who applied the device. If that authorized employee is not available, it may be removed under the direction of the employer, provided specific procedures and training for such removal exist.",
+    "evidence": ["by the employee who applied the device"]
+  },
+  {
+    "doc": "demo_corpus/energy/osha_1910_147.pdf",
+    "type": "single",
+    "question": "What minimum unlocking strength must a tagout device attachment have?",
+    "ground_truth": "No less than 50 pounds, with a design at least equivalent to a one-piece, all-environment-tolerant nylon cable tie.",
+    "evidence": ["strength of no less than 50 pounds"]
+  },
+  {
+    "doc": "demo_corpus/energy/osha_1910_147.pdf",
+    "type": "single",
+    "question": "Do push buttons and selector switches count as energy isolating devices?",
+    "ground_truth": "No. Push buttons, selector switches and other control circuit type devices are not energy isolating devices.",
+    "evidence": ["push buttons, selector switches and other control circuit type devices are not"]
+  },
+  {
+    "doc": "demo_corpus/energy/osha_1910_269.pdf",
+    "type": "single",
+    "question": "Above what height must employees use fall protection under the power generation, transmission and distribution standard?",
+    "ground_truth": "Any time they are more than 1.2 meters (4 feet) above the ground.",
+    "evidence": ["more than 1.2 meters (4 feet) above the ground"]
+  },
+  {
+    "doc": "demo_corpus/energy/osha_1910_269.pdf",
+    "type": "single",
+    "question": "If a shift's work is repetitive and similar, how many job briefings are required?",
+    "ground_truth": "At least one job briefing before the start of the first job of each day or shift, with additional briefings if significant changes that might affect safety occur.",
+    "evidence": ["first job of each day or shift"]
+  },
+  {
+    "doc": "demo_corpus/energy/osha_1910_269.pdf",
+    "type": "single",
+    "question": "For field work by two or more employees on lines energized at 50 volts or more, how many people with first-aid training must be available?",
+    "ground_truth": "At least two trained persons must be available.",
+    "evidence": ["at least two trained persons shall be"]
+  },
+  {
+    "doc": "demo_corpus/energy/osha_1910_147.pdf",
+    "type": "multi_passage",
+    "question": "How often must the energy control procedure be inspected, and when must employees be retrained?",
+    "ground_truth": "The procedure must be inspected at least annually. Retraining is required whenever there is a change in job assignments, a change in machines, equipment or processes that presents a new hazard, or a change in the energy control procedures.",
+    "evidence": ["at least annually to ensure that the", "whenever there is a change in their job"]
+  },
+  {
+    "doc": "demo_corpus/energy/osha_1910_269.pdf",
+    "type": "multi_passage",
+    "question": "What does the standard require about people with first-aid training and about first aid kits?",
+    "ground_truth": "For field work involving two or more employees, at least two trained persons must be available, and the employer must inspect each first aid kit at least once per year.",
+    "evidence": ["at least two trained persons shall be", "each first aid kit at least once per"]
+  },
+  {
+    "doc": "demo_corpus/energy/osha_1910_147.pdf",
+    "type": "unanswerable",
+    "question": "What is the maximum fine for an employer that violates the lockout/tagout standard?",
+    "ground_truth": "The standard does not state any fines or penalty amounts.",
+    "evidence": []
+  },
+  {
+    "doc": "demo_corpus/energy/osha_1910_269.pdf",
+    "type": "unanswerable",
+    "question": "How many hours of classroom training must a line worker complete to be considered a qualified employee?",
+    "ground_truth": "The standard does not specify a number of training hours.",
+    "evidence": []
+  }
+]

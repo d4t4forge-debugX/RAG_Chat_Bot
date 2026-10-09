@@ -5,6 +5,7 @@ from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from langgraph.types import Command
 from source_utils import extract_sources, format_sources
 from error_utils import friendly_error_message
+from ui_utils import conversation_title, EMPTY_TITLE
 import uuid
 import os
 import time
@@ -100,6 +101,22 @@ def load_conversation(thread_id):
                 break
 
     return messages, pending
+
+
+# sidebar label for a thread: its first question (read from the SQLite checkpoint), cached once it exists so reruns stay cheap
+def thread_title(thread_id):
+    cache = st.session_state.setdefault("thread_titles", {})
+    key = str(thread_id)
+    if key in cache:
+        return cache[key]
+    try:
+        messages = chatbot.get_state(config={"configurable": {"thread_id": thread_id}}).values.get("messages", [])
+    except Exception:
+        messages = []
+    title = conversation_title(messages)
+    if title != EMPTY_TITLE:
+        cache[key] = title
+    return title
 
 
 # ============================ Session Setup ============================
@@ -216,7 +233,10 @@ st.sidebar.header("My Conversations")
 
 # thread-switch loop: loads the selected thread's history + any pending interrupt, then reruns to refresh the view
 for thread_id in st.session_state["chat_threads"][::-1]:
-    if st.sidebar.button(str(thread_id)):
+    # ▶ marks the open conversation; key keeps buttons distinct when two titles match; hovering shows the full thread id
+    is_current = str(thread_id) == str(st.session_state["thread_id"])
+    label = ("▶ " if is_current else "") + thread_title(thread_id)
+    if st.sidebar.button(label, key=f"thread_{thread_id}", help=str(thread_id)):
         cleanup_finished_ingestions()
         st.session_state["thread_id"] = thread_id
         messages, pending = load_conversation(thread_id)

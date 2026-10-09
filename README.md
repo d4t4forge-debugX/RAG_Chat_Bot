@@ -90,7 +90,7 @@ cd RAG_Chat_Bot
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # app + evaluation + tests; the app alone needs only requirements.txt
 python patch_ragas.py
 ```
 
@@ -248,7 +248,8 @@ RAG_Chat_Bot/
 ├── guardrail_eval.py          # Guardrail accuracy test
 ├── guardrail_cases.json       # The 40 guardrail test queries
 ├── test_*.py                  # pytest suites (44 tests)
-├── requirements.txt
+├── requirements.txt           # app runtime dependencies (pinned)
+├── requirements-dev.txt       # + ragas, pytest for evaluation and tests
 ├── LICENSE
 └── .gitignore
 ```

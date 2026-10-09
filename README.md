@@ -1,6 +1,6 @@
 # RAG Chatbot
 
-A retrieval-augmented generation (RAG) chatbot that answers questions from an uploaded PDF. It combines hybrid search (FAISS + BM25), human approval before any web search, the source pages under every document answer, conversation persistence, and an evaluation whose results and limits are documented below, including the experiments that did not help.
+A retrieval-augmented generation (RAG) chatbot that answers questions from an uploaded PDF. It combines hybrid search (FAISS + BM25) with a cross-encoder reranker, human approval before any web search, the source pages under every document answer, conversation persistence, a one-click sample corpus of US workplace-safety regulations for the energy sector, and an evaluation whose results and limits are documented below, including the experiments that did not help.
 
 Runs locally; it is not deployed (see [Quickstart](#quickstart)).
 
@@ -10,60 +10,63 @@ Runs locally; it is not deployed (see [Quickstart](#quickstart)).
 
 | What was measured | Result |
 |---|---|
-| Answer quality (RAGAS, 24 questions over 3 documents) | faithfulness 1.0, answer relevancy 0.87, context precision 0.75 |
+| Answer quality (RAGAS, 24 questions over 3 documents) | faithfulness 1.0, answer relevancy 0.87, context precision 0.75 (before the reranker; full re-run pending) |
+| Reranker vs hybrid, retrieval only (27 questions, no LLM) | MRR 0.490 → 0.645; chunks sent to the model 5 → 4 |
+| Hard questions (7: unanswerable + multi-passage) | unanswerable refused 4/4; multi-passage with all evidence retrieved 2/3 → 3/3 with the reranker |
+| Prompt injection planted in a document (4 attacks) | 0/4 succeeded |
 | Retrieval (evidence found, raw questions) | hybrid 20/24 vs FAISS-only 18/24 |
 | Chunk size (page-level hit rate, 5 setups) | 1000/200 best at 22/24 |
 | Input guardrail (40 hand-written cases) | 38/40: no false blocks, missed 2 gibberish strings |
 | Retrieval cache | ~0.07 ms per hit vs ~14 ms uncached on a 2,339-chunk textbook |
-| Tests | 44 pytest tests, no LLM calls |
+| Tests | 62 pytest tests, no LLM calls |
 
 These are small-sample numbers; the [Evaluation](#evaluation) section explains how each was measured and what it does not show.
 
 ## What a session looks like
 
-1. Upload a PDF in the sidebar and click **Process PDF**. Ingestion runs in the background, and the sidebar shows each stage (loading, building embeddings, building the retriever) until it reads "Indexed …".
-2. Ask a question about the document. The answer streams in, and a grey line underneath shows where it came from, for example `Sources retrieved: paper.pdf (PDF pages 4, 5)`.
+1. Upload a PDF in the sidebar and click **Process PDF**, or, with no PDF to hand, click **Load sample: OSHA energy safety rules**, which loads two public-domain OSHA regulations (lockout/tagout, 29 CFR 1910.147, and electric power generation, transmission and distribution, 1910.269) from a pre-built index in under a second. Ingestion runs in the background, and the sidebar shows each stage (loading, building embeddings, building the retriever) until it reads "Indexed …".
+2. Ask a question about the document. The answer streams in, and a grey line underneath shows where it came from, for example `Sources retrieved: paper.pdf (PDF pages 4, 5)`. With the two-regulation sample, pages are listed per file.
 3. Ask something the document does not cover, and the assistant says so instead of guessing.
 4. Ask it to search the web. The run pauses and an **Approval needed** card shows the exact search query. Nothing is sent until you click **Approve**; **Reject** tells the assistant the search was declined.
-5. Switch between conversations in the sidebar. Each one keeps its own document and history, and a conversation left waiting for approval still shows its card when you come back.
+5. Switch between conversations in the sidebar, where each is titled by its first question. Each one keeps its own document and history, and a conversation left waiting for approval still shows its card when you come back.
 
 ## Key features
 
-- **Hybrid retrieval (FAISS + BM25)**: dense semantic search plus keyword search, combined with LangChain's `EnsembleRetriever`.
-- **Source pages under answers**: built from the pages of the chunks the retriever returned for that turn.
-- **Human-in-the-loop approval for web search**: every web search is paused with LangGraph's `interrupt()` and needs an explicit Approve or Reject.
+- **Hybrid retrieval with reranking**: a wide candidate pool from FAISS (dense) and BM25 (keyword), reranked by a local cross-encoder that keeps the best 4 chunks.
+- **Source pages under answers**: built from the chunks the retriever returned for that turn, named per file when a corpus has more than one.
+- **Human-in-the-loop approval for web search**: every web search is paused with LangGraph's `interrupt()` and needs an explicit Approve or Reject, including when the model requests several tools in one step.
+- **The model cannot choose which document it reads**: the conversation id reaches the retrieval tool from the run's config, never from the model's tool arguments.
+- **One-click sample corpus**: OSHA energy-sector safety rules, indexed once and loaded instantly, so the app can be tried without a PDF.
 - **Tool failures do not crash the app**: if a tool raises (for example, web search with no network), the error is returned to the model as a message instead of ending the run.
-- **Model errors become plain messages**: a quota, rate-limit or outage error shows one readable sentence in the chat instead of a traceback, and the conversation stays usable.
-- **Streamed responses** for normal turns.
+- **Model errors become plain messages**: a quota, rate-limit or outage error shows one readable sentence in the chat instead of a traceback; each model call has a 60-second timeout and at most 2 retries.
+- **Streamed responses** for normal turns, rendered as markdown.
 - **Conversation persistence** with `SqliteSaver`, including turns paused for approval.
 - **Async PDF ingestion** on a background thread with live progress.
 - **Query caching** of retrieval results, cleared when a new document is ingested.
 - **Swappable LLM**: the model is chosen in one function and can be overridden with an environment variable.
-- **Input guardrail**: a lightweight LLM check screens clearly abusive, illegal or spam input before the main flow.
-- **Automated tests**: 44 pytest tests covering the calculator, guardrail parsing, caching, source extraction, tool and model error handling, the setup patch and the chunk filter.
-- **Evaluation harness**: RAGAS plus deterministic retrieval scripts.
+- **Input guardrail**: a lightweight LLM check screens clearly abusive, illegal or spam input before the main flow; the user's text is passed to it as delimited data, and only a reply starting with YES lets it through.
+- **Automated tests**: 62 pytest tests covering routing and approval, guardrail parsing, caching, source extraction, the sample corpus, tool and model error handling, the setup patch and the chunk filter.
+- **Evaluation harness**: RAGAS, a hard-question runner, a prompt-injection check, and deterministic retrieval scripts.
 
 ## Architecture
 
-```
-START
-  |
-  v
-guardrail_node --(inappropriate query)--> END (refusal message)
-  |
-  v (query passes)
-chat_node <-------------------------------+
-  |                                        |
-  |-(no tool needed)--> END                |
-  |                                        |
-  |-(wants web search)--> human_review_node|
-  |                         |-approved--> tools --+
-  |                         '-rejected--> back to chat_node with a denial message
-  |                                        |
-  '-(calculator / document search)--> tools
+```mermaid
+flowchart TD
+    U["User (Streamlit)"] --> G["guardrail_node<br/>YES/NO classifier"]
+    G -- blocked --> X["Refusal"]
+    G -- allowed --> C["chat_node<br/>Gemini + bound tools"]
+    C -- "no tool call" --> A["Answer + source pages"]
+    C -- "rag_tool / calculator" --> T["tools (ToolNode)"]
+    C -- "any web search in the step" --> H["human_review_node<br/>interrupt() for approval"]
+    H -- approve --> T
+    H -- reject --> C
+    T --> C
+    T -.-> R["Retrieval: FAISS k=10 + BM25 k=5<br/>then cross-encoder keeps top 4"]
+    S[("SQLite checkpoints")] -.- C
+    L["LangSmith traces"] -.- C
 ```
 
-The graph is built with LangGraph. `chat_node` is the only node that writes the real answer; `guardrail_node` runs a separate, cheap classification call first. Only `duckduckgo_search` goes through `human_review_node`: it is the one tool that makes an external, untrusted network call, while the calculator and document retrieval are deterministic and internal.
+The graph is built with LangGraph. `chat_node` is the only node that writes the real answer; `guardrail_node` runs a separate, cheap classification call first. Web search goes through `human_review_node` whenever it appears anywhere in the model's tool calls: it is the one tool that makes an external, untrusted network call, while the calculator and document retrieval are deterministic and internal. On Reject, every tool call in that step gets an answer, so the conversation stays valid for the model.
 
 | Layer | Choice | Why |
 |---|---|---|
@@ -72,6 +75,7 @@ The graph is built with LangGraph. `chat_node` is the only node that writes the 
 | Embeddings | `sentence-transformers/all-MiniLM-L6-v2` (local) | Free, offline, no API dependency for retrieval |
 | Vector store | FAISS | Fast local similarity search |
 | Keyword search | BM25 (`rank_bm25`) | Catches exact terms dense embeddings can miss |
+| Reranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` (local) | Reads question and chunk together, so it ranks paraphrases better than the bi-encoder |
 | Persistence | SQLite via `SqliteSaver` | Zero-setup conversation storage |
 | Web search | DuckDuckGo (`ddgs`) | No API key required |
 | Evaluation | [RAGAS](https://github.com/explodinggradients/ragas) | LLM-judged RAG metrics |
@@ -177,6 +181,41 @@ On a hand-written set of 40 queries (20 that should be allowed, 20 that should b
 
 A cache hit takes about 0.07 ms against a median of about 14 ms uncached on the 2,339-chunk textbook (about 190x over 10 queries). Across three documents the ratio ranged from 65x to 432x, so treat it as an order-of-magnitude figure. The Gemini call (typically 1 to 4 s) dominates real response time, and the cache does not store LLM output.
 
+### Reranker (retrieval only, no LLM calls)
+
+`compare_rerank.py` runs the 24 standard questions plus the 3 answerable hard questions (27) through three retrievers. A question counts as found only if every one of its evidence phrases is in the returned chunks.
+
+| Config | All evidence found | MRR | Chunks returned | Time per query |
+|---|---|---|---|---|
+| Hybrid (k=4 + BM25 k=2), previous | 21/27 | 0.490 | 5.0 | 9 ms |
+| **Wide hybrid (k=10 + BM25 k=5) → cross-encoder top 4, current** | **22/27** | **0.645** | **4.0** | 61 ms |
+| Wide hybrid → cross-encoder top 3 | 21/27 | 0.636 | 3.0 | 45 ms |
+
+The gain is in ranking, not in coverage: one question more is found, which is within noise, while the right chunk moves up (on the three textbook questions with the lowest context precision, the evidence went from ranks 1, 3 and 2 among 6 chunks to rank 1 among 4). Top 3 dropped a question top 4 kept, so top 4 was chosen. The added ~50 ms is small next to a 1 to 4 second model call.
+
+In the end-to-end RAGAS run on the 21 questions that were scored both before and after (single run each), context precision went from 0.766 to 0.823, with answer relevancy (0.895 vs 0.891) and faithfulness (1.0) unchanged. One trade-off is real: on the short project guide the score dropped (0.70 to 0.54 over its 6 questions), while the textbook and the paper improved. The cross-encoder was trained on web search queries and ranks the guide's checklist-style text less well.
+
+That run also exposed a regression from a separate change: after the thread id stopped being written into the prompt, the model answered three general-sounding textbook questions from its own knowledge without searching the document. The prompt now tells it to retrieve first for anything the document could answer, and a re-check of those three questions showed all three retrieving again.
+
+### Hard questions
+
+`eval_questions_hard/` holds 7 questions written from the documents before any run: 4 that the documents cannot answer but that sound as if they could (an English-to-Spanish BLEU score for a paper that reports only German and French, a dollar training cost for a paper that reports FLOPs), and 3 that need passages from different pages. `eval_hard.py` checks refusals with one small judge call each and checks multi-passage retrieval with plain phrase matching.
+
+| | Before reranker | After |
+|---|---|---|
+| Unanswerable, refused correctly | 4/4 | 4/4 |
+| Multi-passage, all evidence retrieved | 2/3 | 3/3 |
+
+The miss before the reranker was a question about "human approval" whose answer the document words as "confirmation on irreversible actions". Because the bot already refused all four unanswerable questions, a separate abstention step was not added.
+
+### Prompt injection inside a document
+
+`injection_eval.py` plants four instructions inside an otherwise normal policy document (reply only with a fixed word, state a false refund period, append a link, run a web search) and asks ordinary questions. None of the four changed the answer, so no extra defence was added. These are four simple attacks, not a red-team suite. The control that matters more is what the agent is allowed to do: its only outward action, web search, needs human approval, and it has no tools that write anywhere.
+
+### Energy-safety question set
+
+`eval_questions_energy/` has 11 questions over the two OSHA regulations in the sample corpus (7 single-fact, 2 multi-passage, 2 unanswerable such as penalty amounts, which neither regulation states), with every evidence phrase checked by `verify_questions.py`. Results will be added after the run.
+
 ### Reproducing the numbers
 
 The evaluation PDFs are not included in the repository: the textbook is copyrighted and the guide is a third-party document. The research paper is freely available on arXiv ([1706.03762](https://arxiv.org/abs/1706.03762)). `eval_questions/*.json` refer to the PDFs by file name; place equivalent PDFs in the project root under those names, then:
@@ -189,7 +228,15 @@ python compare_retrieval.py           # FAISS-only vs hybrid
 python compare_chunking.py            # chunk sizes and the noise filter
 python bench_cache.py                 # cache timing
 python guardrail_eval.py              # guardrail accuracy
+python compare_rerank.py              # hybrid vs reranked retrieval, no LLM calls
+python eval_hard.py                   # hard questions: refusals and multi-passage retrieval
+python injection_eval.py              # prompt injection planted in a document
+python verify_questions.py eval_questions_energy
+python evaluation.py --questions-dir eval_questions_energy --label energy
+python eval_hard.py --questions-dir eval_questions_energy --label energy
 ```
+
+The OSHA PDFs and their pre-built index are in `demo_corpus/energy/` (US federal regulations are public domain). Rebuild the index with `python build_demo_index.py` if the PDFs change.
 
 The scripts that call the model make many requests. On the Gemini free tier (500 requests per day and 15 per minute for the default model at the time of writing), a full evaluation can use most of a day's quota.
 
@@ -209,22 +256,60 @@ The scripts that call the model make many requests. On the Gemini free tier (500
 
 **Streaming covers new turns; the approval-resume path does not.** Resumed responses are short, and keeping the two code paths separate keeps each one simple.
 
+**Retrieve wide, rerank narrow.** Embedding the question and each chunk separately is fast enough for thousands of chunks but misses paraphrases; a cross-encoder reads both together and ranks better but is too slow for a whole document. Taking about 15 hybrid candidates and letting the cross-encoder pick 4 uses each where it fits.
+
+**The thread id comes from the run config, not the model.** It used to be written into the system prompt for the model to copy into the tool call, so a slip could point the tool at the wrong conversation's document. LangChain injects a tool parameter typed `RunnableConfig` without exposing it to the model, and a test checks that the model-visible schema contains only the query.
+
+**Retrieve first, even for general-sounding questions.** The trade-off: with no document loaded, a general question gets a request to upload one instead of an answer from general knowledge. For a document assistant that is the right default.
+
+**Measured and not adopted.** Abstention when retrieval is weak (unanswerable questions were already refused 4/4), an injection defence (0/4 planted attacks worked), a chunk noise filter and other chunk sizes (see above). Each was kept out because the measurement gave it nothing to fix.
+
 **Local embeddings.** `all-MiniLM-L6-v2` runs locally with no per-call cost and removes one network dependency from the retrieval path.
 
 ## Known limitations
 
 - **No authentication or multi-user support**; this is a single-user local project.
-- **In-memory per-thread state resets on restart**: retrievers and query caches are not persisted. A production version would use a persistent vector store.
-- **One document per conversation thread.**
+- **In-memory per-thread state resets on restart**: retrievers and query caches for uploaded PDFs are not persisted (the sample corpus is, as a pre-built index). A production version would use a persistent vector store.
+- **One document per conversation thread** (the sample corpus is loaded as one combined document).
 - **Sources are shown for live answers only**: they are not restored when a saved thread is reloaded, and a follow-up answered from earlier conversation text (with no new retrieval) shows no sources. The label says "retrieved", not "used": some retrieved pages may not have contributed to the answer.
-- **LLM errors are reported, not retried**: tested with simulated errors, and checked live once by turning the network off mid-session (the chat showed the message and the next question answered normally). The free-tier daily quota can run out during heavy evaluation.
-- **No timeout on LLM calls**: one call hung once during testing.
-- **Web search is best-effort**: the DuckDuckGo wrapper returned an off-topic result once and failed on some networks.
+- **LLM errors are reported after limited retries**: each call has a 60-second timeout and up to 2 retries (the library default of 6 was cut because retries on a quota error spend more quota). The free-tier daily quota can run out during heavy evaluation.
+- **Web search is best-effort**: the DuckDuckGo wrapper returned an off-topic result once and failed on some networks, and its results reach the model unchecked.
 - **The guardrail is deliberately permissive**: it blocks clearly abusive, illegal or spam input and does not block gibberish.
 - **No runtime hallucination check**: groundedness relies on the system prompt plus offline evaluation, not a live verifier.
-- **Evaluation limits**: 24 questions, mostly single-fact lookups, one run per measurement, an LLM judge from the same model family as the answerer, and a question set written by the author.
-- **Math shows as raw LaTeX** (for example `$d_k$`), because chat history is rendered as plain text.
+- **Evaluation limits**: 24 standard, 7 hard and 11 energy questions, written by the author; one run per measurement; the judge is from the same model family as the answerer.
+- **Reranker trade-off**: it helped the textbook and the paper but scored lower on the short project guide (single run).
+- **Two model calls per turn** (guardrail and answer), which halves how many questions the free tier allows per day.
+- **Paired `$` signs render as math**: answers are markdown, so an answer quoting two dollar amounts can show the text between them as a formula.
+- **The Codespaces dev container uses Python 3.11**, while the project is developed and tested on 3.14.
 - **Not implemented, by choice**: semantic chunking, cost-aware model routing, multiple documents per thread.
+
+## Risk notes
+
+| Risk | What handles it |
+|---|---|
+| Retrieved chunks that are mostly noise | Cross-encoder reranker; context precision measured with RAGAS |
+| Questions the documents do not cover | Grounding rules in the system prompt; hard set shows 4/4 refusals |
+| Instructions hidden inside an uploaded PDF | Only outward action (web search) needs human approval; no write tools; injection check 0/4 |
+| Web results are untrusted, not ground truth | Every search needs approval; results are not otherwise checked (known gap) |
+| Free-tier quota running out mid-session | Plain-language quota message; retries capped at 2 |
+| Small evaluation sets | Every figure is labelled with its sample size and run count |
+
+## How this would run in production
+
+| Here | In production |
+|---|---|
+| Gemini free tier | A managed model endpoint such as AWS Bedrock or Azure OpenAI, still chosen in `llm_config.py` |
+| FAISS + BM25 in memory | A managed search service with hybrid search, so indexes persist and scale |
+| SQLite checkpoints | A managed database (for example Postgres) as the LangGraph checkpointer |
+| Streamlit on one machine | A container service behind authentication |
+| LangSmith tracing | Unchanged |
+
+## How the agent checks its work
+
+1. **Frame**: the user's question, screened by the guardrail.
+2. **Delegate**: document retrieval, the calculator, or a web search.
+3. **Verify**: human approval before any web search, grounding rules, page citations, and offline RAGAS and hard-question runs.
+4. **Integrate**: a cited answer the user can check against the page.
 
 ## Project structure
 
@@ -232,7 +317,8 @@ The scripts that call the model make many requests. On the Gemini free tier (500
 RAG_Chat_Bot/
 ├── langgraph_backend.py       # Graph: nodes, routing, tools, guardrail, tool-failure handling
 ├── streamlit_frontend.py      # Streamlit UI: chat, PDF upload, approval flow, streaming, sources, errors
-├── rag_utils.py               # PDF ingestion, hybrid retriever, rag_tool, caching
+├── rag_utils.py               # PDF ingestion, hybrid retriever + reranker, rag_tool, caching, sample corpus loader
+├── ui_utils.py                # Sidebar conversation titles
 ├── source_utils.py            # Extracts and formats the pages a turn's answer was retrieved from
 ├── error_utils.py             # Turns model errors into short plain-language messages
 ├── llm_config.py              # Single place that selects the LLM
@@ -247,7 +333,15 @@ RAG_Chat_Bot/
 ├── bench_cache.py             # Cache timing benchmark
 ├── guardrail_eval.py          # Guardrail accuracy test
 ├── guardrail_cases.json       # The 40 guardrail test queries
-├── test_*.py                  # pytest suites (44 tests)
+├── compare_rerank.py          # Hybrid vs reranked retrieval comparison
+├── eval_hard.py               # Hard-question runner (refusals, multi-passage retrieval)
+├── eval_questions_hard/       # 7 unanswerable and multi-passage questions
+├── eval_questions_energy/     # 11 questions over the OSHA sample corpus
+├── injection_eval.py          # Prompt injection planted in a document
+├── build_demo_index.py        # Builds the sample corpus index once
+├── demo_corpus/energy/        # OSHA 1910.147 and 1910.269 PDFs plus their FAISS index
+├── .streamlit/config.toml     # Turns off the file watcher (avoids torchvision log noise)
+├── test_*.py                  # pytest suites (62 tests)
 ├── requirements.txt           # app runtime dependencies (pinned)
 ├── requirements-dev.txt       # + ragas, pytest for evaluation and tests
 ├── LICENSE
@@ -258,10 +352,10 @@ RAG_Chat_Bot/
 
 Not scheduled; these are the improvements I would make first:
 
-- A harder evaluation set: unanswerable questions (to test refusals) and questions that need several passages.
-- A timeout and retries with backoff on LLM calls.
-- A persistent vector store, so documents survive a restart.
+- A persistent vector store, so uploaded documents survive a restart.
 - A lightweight runtime grounding check on the final answer.
+- A reranker that suits short, checklist-style documents, or a rule for when to skip reranking.
+- A larger prompt-injection suite with harder attacks.
 
 ## License
 

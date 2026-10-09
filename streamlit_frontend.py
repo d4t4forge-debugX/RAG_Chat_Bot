@@ -1,6 +1,6 @@
 import streamlit as st
 from langgraph_backend import chatbot, retrieve_all_threads
-from rag_utils import start_ingestion_async, get_ingestion_status, get_retriever_for_thread
+from rag_utils import start_ingestion_async, get_ingestion_status, get_retriever_for_thread, demo_index_available, load_demo_for_thread
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from langgraph.types import Command
 from source_utils import extract_sources, format_sources
@@ -154,6 +154,12 @@ def _start_pdf_ingestion(pdf_file):
     st.session_state["confirm_pdf_replace"] = False
     st.rerun()
 
+
+# one-click sample documents for visitors without a PDF; only offered while this chat has no document, so it never replaces one
+if demo_index_available() and get_retriever_for_thread(current_thread_id) is None:
+    if st.sidebar.button("Load sample: OSHA energy safety rules"):
+        load_demo_for_thread(current_thread_id)
+        st.rerun()
 
 if uploaded_pdf is not None:
     existing_doc_loaded = get_retriever_for_thread(current_thread_id) is not None

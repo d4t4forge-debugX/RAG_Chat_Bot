@@ -1,3 +1,4 @@
+import os
 import re
 import threading
 from langchain_community.document_loaders import PyPDFLoader
@@ -185,6 +186,45 @@ def build_thread_retriever(vector_store, chunks):
     if USE_RERANKER:
         return get_reranked_retriever(vector_store, chunks)
     return get_retriever(vector_store, chunks)
+
+
+# ---- Sample energy-safety corpus (public-domain OSHA regulations) ----
+# the two PDFs that make up the demo, and where their pre-built FAISS index is saved (built once by build_demo_index.py)
+DEMO_PDFS = ["demo_corpus/energy/osha_1910_147.pdf", "demo_corpus/energy/osha_1910_269.pdf"]
+DEMO_INDEX_DIR = "demo_corpus/energy/index"
+DEMO_DISPLAY_NAME = "OSHA energy safety rules (1910.147 + 1910.269)"
+
+
+# loads both demo PDFs into one chunk list, tagging every chunk with the file it came from (so sources can name the right regulation)
+def load_demo_chunks():
+    chunks = []
+    for pdf_path in DEMO_PDFS:
+        for chunk in load_and_split_pdf(pdf_path):
+            chunk.metadata["source_name"] = os.path.basename(pdf_path)
+            chunks.append(chunk)
+    return chunks
+
+
+# True once build_demo_index.py has been run and the saved index exists on disk
+def demo_index_available():
+    return os.path.exists(os.path.join(DEMO_INDEX_DIR, "index.faiss"))
+
+
+# attaches the pre-built demo index to a chat thread instantly: no embedding at click time, which matters on a slow free-tier server
+def load_demo_for_thread(thread_id: str):
+    key = str(thread_id)
+    # allow_dangerous_deserialization: FAISS stores chunk text in a pickle file; safe here only because we built this file ourselves
+    vector_store = FAISS.load_local(DEMO_INDEX_DIR, embeddings, allow_dangerous_deserialization=True)
+    # BM25 and the reranker need the chunk list itself, which the saved index already holds
+    chunks = [vector_store.docstore.search(doc_id) for doc_id in vector_store.index_to_docstore_id.values()]
+
+    _THREAD_RETRIEVERS[key] = build_thread_retriever(vector_store, chunks)
+    _THREAD_METADATA[key] = {"filename": DEMO_DISPLAY_NAME, "chunks": len(chunks)}
+    _clear_thread_cache(key)
+    result = {"filename": DEMO_DISPLAY_NAME, "chunks": len(chunks)}
+    # reuse the ingestion status so the sidebar shows the same "Indexed ..." message as a normal upload
+    _INGESTION_STATUS[key] = {"status": "done", "stage": "Done", "result": result}
+    return result
 
 
 # LLM-callable tool: retrieves relevant chunks for a thread's PDF, serving from cache when the same query repeats

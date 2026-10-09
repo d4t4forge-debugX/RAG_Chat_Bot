@@ -20,6 +20,12 @@ def extract_sources(messages):
                 data = json.loads(msg.content)
             except (TypeError, json.JSONDecodeError):
                 continue
+            # newer results name the file per chunk; older saved results only have one file name plus a page list
+            if data.get("sources"):
+                for item in data["sources"]:
+                    if item.get("page") is not None:
+                        pages_by_file.setdefault(item.get("file") or "document", set()).add(item["page"] + 1)
+                continue
             filename = data.get("source_file") or "document"
             for page in data.get("pages", []):
                 if page is not None:

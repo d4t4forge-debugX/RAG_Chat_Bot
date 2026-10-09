@@ -100,3 +100,12 @@ def test_clear_thread_cache_removes_only_that_threads_entries():
 def test_model_cannot_set_thread_id():
     visible_args = rag_tool.tool_call_schema.model_json_schema()["properties"]
     assert list(visible_args) == ["query"]
+
+
+# rag_tool reports a file name for every chunk; an ordinary upload (no per-chunk source_name) falls back to the thread's file name
+def test_sources_fall_back_to_thread_filename():
+    from rag_utils import _THREAD_METADATA
+    _THREAD_METADATA["thread-src"] = {"filename": "upload.pdf", "chunks": 1}
+    with patch("rag_utils.get_retriever_for_thread", return_value=_make_fake_retriever(page=4)):
+        result = rag_tool.invoke({"query": "What is X?"}, config={"configurable": {"thread_id": "thread-src"}})
+    assert result["sources"] == [{"file": "upload.pdf", "page": 4}]

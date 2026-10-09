@@ -64,3 +64,16 @@ def test_bad_json_is_skipped():
 def test_format_sources():
     assert format_sources({"doc.pdf": [3, 8]}) == "Sources retrieved: doc.pdf (PDF pages 3, 8)"
     assert format_sources({}) == ""
+
+
+# a multi-file corpus (the OSHA sample) is split by the file each chunk came from, not merged under one name
+def test_per_chunk_sources_are_grouped_by_file():
+    payload = {
+        "query": "q", "context": ["a", "b", "c"], "pages": [2, 40, 2],
+        "sources": [{"file": "osha_1910_147.pdf", "page": 2},
+                    {"file": "osha_1910_269.pdf", "page": 40},
+                    {"file": "osha_1910_147.pdf", "page": 2}],
+        "source_file": "OSHA energy safety rules", "cache_hit": False,
+    }
+    messages = [HumanMessage(content="q"), ToolMessage(content=json.dumps(payload), name="rag_tool", tool_call_id="t1")]
+    assert extract_sources(messages) == {"osha_1910_147.pdf": [3], "osha_1910_269.pdf": [41]}

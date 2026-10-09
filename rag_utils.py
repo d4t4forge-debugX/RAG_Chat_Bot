@@ -253,12 +253,19 @@ def rag_tool(query: str, config: RunnableConfig) -> dict:
     results = retriever.invoke(query)
     context = [doc.page_content for doc in results]
     pages = [doc.metadata.get("page") for doc in results]
+    thread_filename = _THREAD_METADATA.get(str(thread_id), {}).get("filename")
+    # per-chunk file + page, so a multi-file corpus (the OSHA sample) can show which document each page came from
+    sources = [
+        {"file": doc.metadata.get("source_name") or thread_filename, "page": doc.metadata.get("page")}
+        for doc in results
+    ]
 
     result = {
         "query": query,
         "context": context,
         "pages": pages,
-        "source_file": _THREAD_METADATA.get(str(thread_id), {}).get("filename"),
+        "sources": sources,
+        "source_file": thread_filename,
         "cache_hit": False,
     }
 

@@ -160,36 +160,52 @@ def handle_tool_failure(error: Exception) -> str:
 # LangGraph's prebuilt node that runs whichever tool the LLM requested; failures are reported back to the model, not raised
 tool_node = ToolNode(tools, handle_tool_errors=handle_tool_failure)
 
-# pauses the graph via interrupt() to get human approval before a gated tool (web search) actually runs
+# name of the one tool that must always pass through human approval
+WEB_SEARCH_TOOL = "duckduckgo_search"
+
+
+# True if ANY tool call in this model reply is a web search, not just the first one
+def wants_web_search(message) -> bool:
+    return any(call["name"] == WEB_SEARCH_TOOL for call in (getattr(message, "tool_calls", None) or []))
+
+
+# pauses the graph via interrupt() to get human approval before web search runs; works even when the model requested several tools at once
 def human_review_node(state: ChatState):
     last_message = state["messages"][-1]
-    tool_call = last_message.tool_calls[0]
+    search_calls = [call for call in last_message.tool_calls if call["name"] == WEB_SEARCH_TOOL]
 
     decision = interrupt({
         "question": "Approve this tool call?",
-        "tool_name": tool_call["name"],
-        "tool_args": tool_call["args"],
+        "tool_name": WEB_SEARCH_TOOL,
+        "tool_args": search_calls[0]["args"] if len(search_calls) == 1 else [call["args"] for call in search_calls],
     })
 
     if decision == "approve":
         return Command(goto="tools")
-    else:
-        denial = ToolMessage(
-            content=(
+
+    # on reject, every tool call in the reply needs its own answer, or Gemini rejects the conversation as incomplete
+    replies = []
+    for call in last_message.tool_calls:
+        if call["name"] == WEB_SEARCH_TOOL:
+            content = (
                 "The user explicitly declined to approve this tool call. "
                 "Do not retry this tool or attempt a similar search. "
                 "Instead, tell the user the search was not approved and ask if they'd like to proceed differently."
-            ),
-            tool_call_id=tool_call["id"],
-        )
-        return Command(goto="chat_node", update={"messages": [denial]})
+            )
+        else:
+            content = (
+                "Not run: this was requested together with a web search the user declined. "
+                "Call this tool again on its own if you still need it."
+            )
+        replies.append(ToolMessage(content=content, tool_call_id=call["id"], name=call["name"]))
+    return Command(goto="chat_node", update={"messages": replies})
 
 # routes after chat_node: sends web-search calls to human review, other tool calls straight to tools, else ends
 def route_after_chat(state: ChatState):
     last_message = state["messages"][-1]
     if not getattr(last_message, "tool_calls", None):
         return END
-    if last_message.tool_calls[0]["name"] == "duckduckgo_search":
+    if wants_web_search(last_message):
         return "human_review_node"
     return "tools"
 

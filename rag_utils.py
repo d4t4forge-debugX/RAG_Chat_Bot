@@ -7,7 +7,9 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_classic.retrievers import EnsembleRetriever
+from langchain_classic.retrievers import EnsembleRetriever, ContextualCompressionRetriever
+from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
+from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 
 # Stores each thread's vector store, keyed by thread_id
 _THREAD_RETRIEVERS = {}
@@ -42,7 +44,7 @@ def ingest_pdf_for_thread(pdf_path: str, thread_id: str, filename: str = None):
     """Synchronous ingestion (kept for evaluation.py and the __main__ test below)."""
     chunks = load_and_split_pdf(pdf_path)
     vector_store = build_vector_store(chunks)
-    retriever = get_retriever(vector_store, chunks)
+    retriever = build_thread_retriever(vector_store, chunks)
 
     _THREAD_RETRIEVERS[str(thread_id)] = retriever
     _THREAD_METADATA[str(thread_id)] = {
@@ -66,7 +68,7 @@ def _ingest_pdf_worker(pdf_path: str, thread_id: str, filename: str):
         vector_store = build_vector_store(chunks)
 
         _INGESTION_STATUS[key] = {"status": "running", "stage": "Building hybrid retriever..."}
-        retriever = get_retriever(vector_store, chunks)
+        retriever = build_thread_retriever(vector_store, chunks)
 
         _THREAD_RETRIEVERS[key] = retriever
         _THREAD_METADATA[key] = {"filename": filename or pdf_path, "chunks": len(chunks)}
@@ -162,6 +164,29 @@ def get_retriever(vector_store, chunks, k=4, bm25_k=2):
     return hybrid_retriever
 
 
+# switch for A/B runs: True = wide hybrid pool reranked by the cross-encoder, False = the original hybrid retriever
+USE_RERANKER = True
+# how many chunks survive reranking (top-4 beat top-3 and the current hybrid in compare_rerank.py)
+RERANK_TOP_N = 4
+
+# small local cross-encoder that scores each (question, chunk) pair together; only loaded once
+cross_encoder = HuggingFaceCrossEncoder(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+
+# "retrieve wide, rerank narrow": up to 15 hybrid candidates (FAISS k=10 + BM25 k=5), cross-encoder keeps the best RERANK_TOP_N
+def get_reranked_retriever(vector_store, chunks, top_n=RERANK_TOP_N):
+    wide_pool = get_retriever(vector_store, chunks, k=10, bm25_k=5)
+    reranker = CrossEncoderReranker(model=cross_encoder, top_n=top_n)
+    return ContextualCompressionRetriever(base_compressor=reranker, base_retriever=wide_pool)
+
+
+# the retriever the app actually uses for a thread, chosen by the USE_RERANKER switch
+def build_thread_retriever(vector_store, chunks):
+    if USE_RERANKER:
+        return get_reranked_retriever(vector_store, chunks)
+    return get_retriever(vector_store, chunks)
+
+
 # LLM-callable tool: retrieves relevant chunks for a thread's PDF, serving from cache when the same query repeats
 @tool
 def rag_tool(query: str, config: RunnableConfig) -> dict:
@@ -210,7 +235,7 @@ if __name__ == "__main__":
     vector_store = build_vector_store(chunks)
     print("Vector store built successfully!")
 
-    retriever = get_retriever(vector_store, chunks)
+    retriever = build_thread_retriever(vector_store, chunks)
     query = "What is supervised learning?"
     results = retriever.invoke(query)
 

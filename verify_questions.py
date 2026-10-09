@@ -1,5 +1,6 @@
 import glob
 import json
+import sys
 
 from pypdf import PdfReader
 
@@ -9,12 +10,12 @@ def normalize(text):
     return " ".join(text.split()).lower()
 
 
-# checks that every question's evidence phrase really appears in its PDF's extracted text
-def main():
+# checks that every question's evidence phrase(s) really appear in its PDF's extracted text; folder defaults to eval_questions
+def main(folder="eval_questions"):
     pdf_text_cache = {}
     missing = 0
 
-    for path in sorted(glob.glob("eval_questions/*.json")):
+    for path in sorted(glob.glob(f"{folder}/*.json")):
         with open(path) as f:
             items = json.load(f)
 
@@ -25,7 +26,9 @@ def main():
                 pages = [(page.extract_text() or "") for page in reader.pages]
                 pdf_text_cache[doc] = normalize(" ".join(pages))
 
-            found = normalize(item["evidence"]) in pdf_text_cache[doc]
+            # evidence may be one phrase or a list (multi-passage); unanswerable questions have an empty list and are skipped
+            phrases = item["evidence"] if isinstance(item["evidence"], list) else [item["evidence"]]
+            found = all(normalize(phrase) in pdf_text_cache[doc] for phrase in phrases)
             print("OK     " if found else "MISSING", doc, "|", item["question"][:60])
             if not found:
                 missing += 1
@@ -34,4 +37,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1] if len(sys.argv) > 1 else "eval_questions")

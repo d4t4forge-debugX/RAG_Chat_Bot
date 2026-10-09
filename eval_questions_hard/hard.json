@@ -1,0 +1,51 @@
+[
+  {
+    "doc": "test3.pdf",
+    "type": "unanswerable",
+    "question": "What BLEU score did the Transformer achieve on the WMT 2014 English-to-Spanish translation task?",
+    "ground_truth": "The paper does not report an English-to-Spanish result; it only reports English-to-German and English-to-French.",
+    "evidence": []
+  },
+  {
+    "doc": "test3.pdf",
+    "type": "unanswerable",
+    "question": "How much did it cost in US dollars to train the big Transformer model?",
+    "ground_truth": "The paper does not give a dollar cost; it reports training cost in FLOPs and training time (3.5 days on 8 P100 GPUs).",
+    "evidence": []
+  },
+  {
+    "doc": "test4.pdf",
+    "type": "unanswerable",
+    "question": "What chunk size does the guide recommend for the Groundtruth project?",
+    "ground_truth": "The guide does not recommend a specific chunk size; it only says chunk size should be one of the configurations compared.",
+    "evidence": []
+  },
+  {
+    "doc": "test4.pdf",
+    "type": "unanswerable",
+    "question": "How much does it cost to join the baswe community?",
+    "ground_truth": "The guide does not mention a price for joining the community.",
+    "evidence": []
+  },
+  {
+    "doc": "test3.pdf",
+    "type": "multi_passage",
+    "question": "How do the base and big Transformer models differ in training steps and training time, and what English-to-German BLEU score did each reach?",
+    "ground_truth": "The base model trained for 100,000 steps (12 hours) and reached 27.3 BLEU; the big model trained for 300,000 steps (3.5 days) and reached 28.4 BLEU.",
+    "evidence": ["trained the base models for a total of 100,000 steps or 12 hours", "the big models were trained for 300,000 steps", "Transformer (base model) 27.3"]
+  },
+  {
+    "doc": "test4.pdf",
+    "type": "multi_passage",
+    "question": "How large an eval set do the Fieldnote and Groundtruth projects each require?",
+    "ground_truth": "Fieldnote needs a 40 question eval set, 15 of which are unanswerable from text alone; Groundtruth needs a golden set of 100 query and passage pairs.",
+    "evidence": ["40 question eval set, 15 of which are unanswerable from text alone", "a golden set of 100 query and passage pairs"]
+  },
+  {
+    "doc": "test4.pdf",
+    "type": "multi_passage",
+    "question": "Which projects in the guide require a human approval or confirmation step, and what action does it guard?",
+    "ground_truth": "Casefile puts a human approval gate in front of any payout recommendation or write back to the claims system; Doorman requires confirmation on irreversible actions.",
+    "evidence": ["a human approval gate in front of any payout recommendation", "confirmation on irreversible actions"]
+  }
+]

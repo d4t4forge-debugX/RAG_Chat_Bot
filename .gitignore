@@ -25,3 +25,12 @@ eval_runs/
 *.pdf
 
 PROJECT_NOTES.md
+
+# public-domain demo documents ARE committed (overrides *.pdf above)
+!demo_corpus/**/*.pdf
+
+# personal planning and scratch files, kept out of the public repo
+RAG Chatbot → LTM Roadmap.md
+files.zip
+show_noise.py
+show_noise_detail.py

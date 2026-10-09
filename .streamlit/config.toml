@@ -1,0 +1,4 @@
+# Streamlit's file watcher scans every loaded module for edits; on transformers it tries to import
+# torchvision (not installed) and floods the log with tracebacks. Turning it off removes the noise.
+[server]
+fileWatcherType = "none"

@@ -231,7 +231,11 @@ for thread_id in st.session_state["chat_threads"][::-1]:
 # renders every stored message in the current thread's history
 for message in st.session_state["message_history"]:
     with st.chat_message(message["role"]):
-        st.text(extract_text(message["content"]))
+        # assistant answers are markdown (bold, lists, $math$), so render them; user text stays plain so it shows exactly as typed
+        if message["role"] == "assistant":
+            st.markdown(extract_text(message["content"]))
+        else:
+            st.text(extract_text(message["content"]))
         if message.get("sources"):
             st.caption(message["sources"])
 

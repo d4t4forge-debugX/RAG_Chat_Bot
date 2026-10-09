@@ -20,7 +20,7 @@ def questions_for(doc):
 # times one rag_tool call in milliseconds
 def timed_call(query, thread_id):
     start = time.perf_counter()
-    result = rag_tool.invoke({"query": query, "thread_id": thread_id})
+    result = rag_tool.invoke({"query": query}, config={"configurable": {"thread_id": thread_id}})
     elapsed_ms = (time.perf_counter() - start) * 1000
     return elapsed_ms, result["cache_hit"]
 

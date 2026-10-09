@@ -115,14 +115,10 @@ def guardrail_node(state: ChatState):
 def chat_node(state: ChatState, config=None):
     messages = state["messages"]
 
-    thread_id = None
-    if config and isinstance(config, dict):
-        thread_id = config.get("configurable", {}).get("thread_id")
-
     system_message = SystemMessage(
         content=(
             "You are a research assistant. If the user asks about their uploaded document, "
-            f"call the rag_tool and pass thread_id='{thread_id}'. "
+            "call the rag_tool. "
             "You can also use the calculator and web search tools when helpful.\n\n"
             "For complex or multi-part questions, break them into smaller sub-questions "
             "and call rag_tool multiple times with different, specific queries if needed, "

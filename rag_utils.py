@@ -1,10 +1,9 @@
 import re
 import threading
-from typing import Optional
-
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.retrievers import BM25Retriever
 from langchain_community.vectorstores import FAISS
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -165,12 +164,14 @@ def get_retriever(vector_store, chunks, k=4, bm25_k=2):
 
 # LLM-callable tool: retrieves relevant chunks for a thread's PDF, serving from cache when the same query repeats
 @tool
-def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
+def rag_tool(query: str, config: RunnableConfig) -> dict:
     """
     Retrieve relevant information from the uploaded PDF for this chat thread.
-    Always include the thread_id when calling this tool.
     Use this whenever the user asks a question that could be answered by their uploaded document.
     """
+    # thread_id comes from the run's own config (injected by LangGraph), never from the model,
+    # so the model can't mistype it or point the tool at another conversation's document
+    thread_id = (config or {}).get("configurable", {}).get("thread_id")
     cache_key = (str(thread_id), query.strip().lower())
     if cache_key in _QUERY_CACHE:
         cached_result = dict(_QUERY_CACHE[cache_key])

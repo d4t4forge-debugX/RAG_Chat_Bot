@@ -36,7 +36,7 @@ def _make_fake_retriever(page_content="Fake chunk content", page=1):
 def test_first_call_is_cache_miss():
     fake_retriever = _make_fake_retriever()
     with patch("rag_utils.get_retriever_for_thread", return_value=fake_retriever):
-        result = rag_tool.invoke({"query": "What is X?", "thread_id": "thread-1"})
+        result = rag_tool.invoke({"query": "What is X?"}, config={"configurable": {"thread_id": "thread-1"}})
         assert result["cache_hit"] is False
         assert result["context"] == ["Fake chunk content"]
         fake_retriever.invoke.assert_called_once_with("What is X?")
@@ -46,8 +46,8 @@ def test_first_call_is_cache_miss():
 def test_second_identical_call_is_cache_hit():
     fake_retriever = _make_fake_retriever()
     with patch("rag_utils.get_retriever_for_thread", return_value=fake_retriever):
-        rag_tool.invoke({"query": "What is X?", "thread_id": "thread-1"})
-        result = rag_tool.invoke({"query": "What is X?", "thread_id": "thread-1"})
+        rag_tool.invoke({"query": "What is X?"}, config={"configurable": {"thread_id": "thread-1"}})
+        result = rag_tool.invoke({"query": "What is X?"}, config={"configurable": {"thread_id": "thread-1"}})
 
         assert result["cache_hit"] is True
         # The retriever should only have been hit once — the second call
@@ -62,8 +62,8 @@ def test_cache_key_is_case_and_whitespace_insensitive():
     the same cache entry."""
     fake_retriever = _make_fake_retriever()
     with patch("rag_utils.get_retriever_for_thread", return_value=fake_retriever):
-        rag_tool.invoke({"query": "What is X?", "thread_id": "thread-1"})
-        result = rag_tool.invoke({"query": "  WHAT IS X?  ", "thread_id": "thread-1"})
+        rag_tool.invoke({"query": "What is X?"}, config={"configurable": {"thread_id": "thread-1"}})
+        result = rag_tool.invoke({"query": "  WHAT IS X?  "}, config={"configurable": {"thread_id": "thread-1"}})
 
         assert result["cache_hit"] is True
         fake_retriever.invoke.assert_called_once()
@@ -73,8 +73,8 @@ def test_cache_key_is_case_and_whitespace_insensitive():
 def test_different_threads_do_not_share_cache():
     fake_retriever = _make_fake_retriever()
     with patch("rag_utils.get_retriever_for_thread", return_value=fake_retriever):
-        rag_tool.invoke({"query": "What is X?", "thread_id": "thread-1"})
-        result = rag_tool.invoke({"query": "What is X?", "thread_id": "thread-2"})
+        rag_tool.invoke({"query": "What is X?"}, config={"configurable": {"thread_id": "thread-1"}})
+        result = rag_tool.invoke({"query": "What is X?"}, config={"configurable": {"thread_id": "thread-2"}})
 
         assert result["cache_hit"] is False
         assert fake_retriever.invoke.call_count == 2
@@ -84,13 +84,19 @@ def test_different_threads_do_not_share_cache():
 def test_clear_thread_cache_removes_only_that_threads_entries():
     fake_retriever = _make_fake_retriever()
     with patch("rag_utils.get_retriever_for_thread", return_value=fake_retriever):
-        rag_tool.invoke({"query": "What is X?", "thread_id": "thread-1"})
-        rag_tool.invoke({"query": "What is Y?", "thread_id": "thread-2"})
+        rag_tool.invoke({"query": "What is X?"}, config={"configurable": {"thread_id": "thread-1"}})
+        rag_tool.invoke({"query": "What is Y?"}, config={"configurable": {"thread_id": "thread-2"}})
 
         _clear_thread_cache("thread-1")
 
-        result_thread_1 = rag_tool.invoke({"query": "What is X?", "thread_id": "thread-1"})
-        result_thread_2 = rag_tool.invoke({"query": "What is Y?", "thread_id": "thread-2"})
+        result_thread_1 = rag_tool.invoke({"query": "What is X?"}, config={"configurable": {"thread_id": "thread-1"}})
+        result_thread_2 = rag_tool.invoke({"query": "What is Y?"}, config={"configurable": {"thread_id": "thread-2"}})
 
         assert result_thread_1["cache_hit"] is False  # cache was cleared, re-fetched
         assert result_thread_2["cache_hit"] is True    # untouched, still cached
+
+
+# the model must only see "query": thread_id is injected from the run config, so the model can't choose another thread's document
+def test_model_cannot_set_thread_id():
+    visible_args = rag_tool.tool_call_schema.model_json_schema()["properties"]
+    assert list(visible_args) == ["query"]

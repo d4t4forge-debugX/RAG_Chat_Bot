@@ -22,8 +22,8 @@ from rag_utils import embeddings as rag_embeddings
 METRIC_NAMES = ["faithfulness", "answer_relevancy", "llm_context_precision_with_reference"]
 
 
-# reads every eval_questions/*.json file into one list, optionally keeping only the first N questions per file
-def load_questions(limit_per_doc=None):
+# reads every eval_questions/*.json file into one list, optionally keeping only the first N per file or only questions containing a --match phrase
+def load_questions(limit_per_doc=None, match=None):
     questions = []
     for path in sorted(glob.glob("eval_questions/*.json")):
         with open(path) as f:
@@ -31,6 +31,8 @@ def load_questions(limit_per_doc=None):
         if limit_per_doc:
             items = items[:limit_per_doc]
         questions.extend(items)
+    if match:
+        questions = [q for q in questions if any(m.lower() in q["question"].lower() for m in match)]
     return questions
 
 
@@ -172,11 +174,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit-per-doc", type=int, default=None,
                         help="only use the first N questions from each question file (cheap smoke test)")
+    parser.add_argument("--match", nargs="+", default=None,
+                        help="only run questions containing any of these phrases (cheap targeted re-check)")
     parser.add_argument("--label", default="hybrid_k4_bm25k2",
                         help="name for this run's configuration, used in the output filename")
     args = parser.parse_args()
 
-    questions = load_questions(args.limit_per_doc)
+    questions = load_questions(args.limit_per_doc, args.match)
     print(f"Loaded {len(questions)} questions.\n")
 
     base_threads, chunk_counts = ingest_documents(questions)

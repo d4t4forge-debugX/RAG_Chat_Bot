@@ -117,8 +117,9 @@ def chat_node(state: ChatState, config=None):
 
     system_message = SystemMessage(
         content=(
-            "You are a research assistant. If the user asks about their uploaded document, "
-            "call the rag_tool. "
+            "You are a research assistant. A PDF may be uploaded for this conversation. "
+            "For any question that could be answered from it, including definitions and "
+            "general-sounding questions, call the rag_tool first and answer from what it returns. "
             "You can also use the calculator and web search tools when helpful.\n\n"
             "For complex or multi-part questions, break them into smaller sub-questions "
             "and call rag_tool multiple times with different, specific queries if needed, "

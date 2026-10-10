@@ -1,6 +1,6 @@
 from rag_utils import load_demo_chunks, build_vector_store, DEMO_INDEX_DIR
 
-# Run once (and again only if the demo PDFs change):  python build_demo_index.py
+# Run once (and again only if the demo PDFs change):  python -m scripts.build_demo_index
 # Embeds both OSHA PDFs locally and saves the FAISS index, so the app can load the demo instantly
 # instead of embedding ~90 pages on a slow free-tier server.
 

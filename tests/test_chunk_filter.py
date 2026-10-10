@@ -1,4 +1,4 @@
-from chunk_filter import is_noise_chunk
+from evals.chunk_filter import is_noise_chunk
 
 PROSE = (
     "Supervised learning is a type of machine learning where the training set you feed "

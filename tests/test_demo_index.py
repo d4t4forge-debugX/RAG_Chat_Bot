@@ -2,7 +2,7 @@ import pytest
 
 from rag_utils import demo_index_available, load_demo_for_thread, get_retriever_for_thread, _THREAD_METADATA, DEMO_DISPLAY_NAME
 
-# these tests need the saved index; run `python build_demo_index.py` once to create it
+# these tests need the saved index; run `python -m scripts.build_demo_index` once to create it
 needs_index = pytest.mark.skipif(not demo_index_available(), reason="demo index not built yet")
 
 

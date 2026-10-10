@@ -2,9 +2,9 @@ import json
 import math
 import sys
 
-from evaluation import score_with_ragas, mean_ignoring_nan, METRIC_NAMES
+from evals.evaluation import score_with_ragas, mean_ignoring_nan, METRIC_NAMES
 
-# Usage: python rescore.py eval_runs/<run>.json
+# Usage: python -m evals.rescore eval_runs/<run>.json
 # Re-runs only the RAGAS judge for questions whose scores came back NaN (for example when the quota ran out
 # mid-scoring). The chatbot is NOT asked again: the saved answers and retrieved chunks are scored as they are.
 

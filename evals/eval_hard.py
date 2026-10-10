@@ -5,7 +5,7 @@ import os
 import time
 from datetime import datetime
 
-from evaluation import ingest_documents, ask_chatbot, content_to_text, get_contexts_used_by_chatbot
+from evals.evaluation import ingest_documents, ask_chatbot, content_to_text, get_contexts_used_by_chatbot
 from langgraph_backend import llm
 
 # seconds to wait between questions so we stay under the free tier's 15 requests per minute
@@ -18,7 +18,7 @@ def normalize(text):
 
 
 # reads every question in <questions_dir>/*.json into one list (default: the hard set)
-def load_hard_questions(questions_dir="eval_questions_hard"):
+def load_hard_questions(questions_dir="evals/questions/hard"):
     questions = []
     for path in sorted(glob.glob(f"{questions_dir}/*.json")):
         with open(path) as f:
@@ -49,7 +49,7 @@ def evidence_coverage(evidence, contexts):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--label", default="baseline", help="name for this run, used in the output filename")
-    parser.add_argument("--questions-dir", default="eval_questions_hard", help="folder of question files to run")
+    parser.add_argument("--questions-dir", default="evals/questions/hard", help="folder of question files to run")
     args = parser.parse_args()
 
     questions = load_hard_questions(args.questions_dir)

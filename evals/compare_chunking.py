@@ -5,7 +5,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 
-from chunk_filter import is_noise_chunk
+from evals.chunk_filter import is_noise_chunk
 from rag_utils import clean_text, embeddings, get_retriever
 
 
@@ -33,7 +33,7 @@ def split_pages(pages, chunk_size, overlap):
 # reads the verified questions with their evidence phrases
 def load_questions():
     questions = []
-    for path in sorted(glob.glob("eval_questions/*.json")):
+    for path in sorted(glob.glob("evals/questions/standard/*.json")):
         with open(path) as f:
             questions.extend(json.load(f))
     return questions

@@ -11,7 +11,7 @@ def normalize(text):
 
 
 # checks that every question's evidence phrase(s) really appear in its PDF's extracted text; folder defaults to eval_questions
-def main(folder="eval_questions"):
+def main(folder="evals/questions/standard"):
     pdf_text_cache = {}
     missing = 0
 
@@ -37,4 +37,4 @@ def main(folder="eval_questions"):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "eval_questions")
+    main(sys.argv[1] if len(sys.argv) > 1 else "evals/questions/standard")

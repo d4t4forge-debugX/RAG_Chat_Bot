@@ -23,7 +23,7 @@ METRIC_NAMES = ["faithfulness", "answer_relevancy", "llm_context_precision_with_
 
 
 # reads every <questions_dir>/*.json file into one list, optionally keeping only the first N per file or only questions containing a --match phrase
-def load_questions(limit_per_doc=None, match=None, questions_dir="eval_questions"):
+def load_questions(limit_per_doc=None, match=None, questions_dir="evals/questions/standard"):
     questions = []
     for path in sorted(glob.glob(f"{questions_dir}/*.json")):
         with open(path) as f:
@@ -175,7 +175,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit-per-doc", type=int, default=None,
                         help="only use the first N questions from each question file (cheap smoke test)")
-    parser.add_argument("--questions-dir", default="eval_questions",
+    parser.add_argument("--questions-dir", default="evals/questions/standard",
                         help="folder of question files to run (e.g. eval_questions_energy)")
     parser.add_argument("--match", nargs="+", default=None,
                         help="only run questions containing any of these phrases (cheap targeted re-check)")

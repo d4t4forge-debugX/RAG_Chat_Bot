@@ -14,7 +14,7 @@ def normalize(text):
 # reads every verified question (with its doc and evidence phrase) from eval_questions/*.json
 def load_questions():
     questions = []
-    for path in sorted(glob.glob("eval_questions/*.json")):
+    for path in sorted(glob.glob("evals/questions/standard/*.json")):
         with open(path) as f:
             questions.extend(json.load(f))
     return questions

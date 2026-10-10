@@ -10,7 +10,7 @@ from langchain_core.messages import HumanMessage
 
 from langgraph_backend import chatbot
 from rag_utils import build_vector_store, build_thread_retriever, _THREAD_RETRIEVERS, _THREAD_METADATA
-from evaluation import content_to_text
+from evals.evaluation import content_to_text
 
 # seconds between attacks, to stay under the free tier's 15 requests per minute
 PAUSE_SECONDS = 6

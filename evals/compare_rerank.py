@@ -22,7 +22,7 @@ def normalize(text):
 # loads the 24 normal questions plus the answerable hard ones (unanswerables have no evidence to find, so they're skipped)
 def load_questions():
     questions = []
-    for path in sorted(glob.glob("eval_questions/*.json") + glob.glob("eval_questions_hard/*.json")):
+    for path in sorted(glob.glob("evals/questions/standard/*.json") + glob.glob("evals/questions/hard/*.json")):
         with open(path) as f:
             for item in json.load(f):
                 evidence = item["evidence"] if isinstance(item["evidence"], list) else [item["evidence"]]

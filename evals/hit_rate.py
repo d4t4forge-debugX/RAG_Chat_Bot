@@ -11,7 +11,7 @@ def normalize(text):
 # maps each question's text to its evidence phrase, read from the verified question files
 def load_evidence():
     evidence = {}
-    for path in sorted(glob.glob("eval_questions/*.json")):
+    for path in sorted(glob.glob("evals/questions/standard/*.json")):
         with open(path) as f:
             for item in json.load(f):
                 evidence[item["question"]] = item["evidence"]

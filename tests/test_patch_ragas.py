@@ -1,4 +1,4 @@
-from patch_ragas import NEW, OLD, apply_patch
+from scripts.patch_ragas import NEW, OLD, apply_patch
 
 
 # verifies the original broken import lines are rewritten to the try/except version

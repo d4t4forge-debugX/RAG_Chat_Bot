@@ -11,7 +11,7 @@ from rag_utils import ingest_pdf_for_thread, rag_tool, _QUERY_CACHE
 # reads the verified eval questions for one document, to use as realistic queries
 def questions_for(doc):
     questions = []
-    for path in sorted(glob.glob("eval_questions/*.json")):
+    for path in sorted(glob.glob("evals/questions/standard/*.json")):
         with open(path) as f:
             questions += [q["question"] for q in json.load(f) if q["doc"] == doc]
     return questions

@@ -40,5 +40,4 @@ Three changes were measured and deliberately not shipped (an abstention step, an
 - Free-tier model quota limits daily use.
 
 ## Next steps
-- Redeploy with the sample corpus so it can be tried in one click.
 - Add a persistent vector store and a runtime grounding check.

@@ -21,23 +21,24 @@ Anyone who uploads a PDF and asks questions about it. The built-in sample target
 ## Results (small samples, single runs)
 | Measure | Result |
 |---|---|
-| Faithfulness | 1.0 on 24 questions |
-| Context precision | 0.766 → 0.823 with the reranker (21 questions scored in both runs); full re-run pending |
+| Context precision | 0.75 → 0.86 with the reranker, 24 questions, higher for all three documents |
+| Faithfulness | 1.0 → 0.99 |
+| Answer relevancy | 0.87 → 0.81 (mostly correct but terse answers scored lower) |
 | Retrieval ranking (MRR, no LLM) | 0.490 → 0.645 with the reranker, 27 questions |
 | Unanswerable questions refused | 4/4 |
 | Prompt injection planted in a document | 0/4 attacks changed the answer |
-| Energy-safety question set | 11 questions written and verified; run pending |
+| Energy-safety set (11 questions, OSHA rules) | faithfulness 1.0, context precision 0.76; evidence found 9/9; unanswerable refused 2/2 |
+| Input guardrail (40 cases) | 39/40, no false blocks |
 | Automated tests | 62, no model calls |
 
 Three changes were measured and deliberately not shipped (an abstention step, an injection defence, a chunk-noise filter) because the data showed nothing for them to fix.
 
 ## Risks
 - Evaluation sets are small and written by the author; the judge model is from the same family as the answering model.
-- The reranker scored lower on one short checklist-style document while improving the other two.
+- Answer relevancy dropped with the reranker, even though the lowest-scored answers read as correct.
 - Web search results are not checked beyond the human approval step.
 - Free-tier model quota limits daily use.
 
 ## Next steps
-- Run the full evaluation and the energy set; merge the improvements to the main branch.
 - Redeploy with the sample corpus so it can be tried in one click.
 - Add a persistent vector store and a runtime grounding check.

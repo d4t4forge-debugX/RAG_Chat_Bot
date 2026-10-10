@@ -10,13 +10,14 @@ Runs locally; it is not deployed (see [Quickstart](#quickstart)).
 
 | What was measured | Result |
 |---|---|
-| Answer quality (RAGAS, 24 questions over 3 documents) | faithfulness 1.0, answer relevancy 0.87, context precision 0.75 (before the reranker; full re-run pending) |
+| Answer quality (RAGAS, 24 questions over 3 documents) | context precision 0.75 → 0.86, faithfulness 1.0 → 0.99, answer relevancy 0.87 → 0.81 (before → after the reranker) |
+| Energy-safety sample (11 questions over 2 OSHA regulations) | faithfulness 1.0, answer relevancy 0.83, context precision 0.76; all evidence retrieved 9/9; unanswerable refused 2/2 |
 | Reranker vs hybrid, retrieval only (27 questions, no LLM) | MRR 0.490 → 0.645; chunks sent to the model 5 → 4 |
 | Hard questions (7: unanswerable + multi-passage) | unanswerable refused 4/4; multi-passage with all evidence retrieved 2/3 → 3/3 with the reranker |
 | Prompt injection planted in a document (4 attacks) | 0/4 succeeded |
 | Retrieval (evidence found, raw questions) | hybrid 20/24 vs FAISS-only 18/24 |
 | Chunk size (page-level hit rate, 5 setups) | 1000/200 best at 22/24 |
-| Input guardrail (40 hand-written cases) | 38/40: no false blocks, missed 2 gibberish strings |
+| Input guardrail (40 hand-written cases) | 39/40: no false blocks, missed 1 gibberish string (38/40 before the stricter parsing) |
 | Retrieval cache | ~0.07 ms per hit vs ~14 ms uncached on a 2,339-chunk textbook |
 | Tests | 62 pytest tests, no LLM calls |
 
@@ -175,7 +176,7 @@ The current 1000/200 setting scored best, so it stays. A filter that drops table
 
 ### Guardrail accuracy
 
-On a hand-written set of 40 queries (20 that should be allowed, 20 that should be blocked): all 20 allowed queries were allowed, and 18 of 20 blocked queries were blocked (all abusive, illegal-request and promotional-spam cases). The two misses were gibberish strings, which the deliberately permissive prompt does not treat as spam. The cases were written by the author, so they are on the easy side.
+On a hand-written set of 40 queries (20 that should be allowed, 20 that should be blocked): all 20 allowed queries were allowed, and 19 of 20 blocked queries were blocked (up from 18 before the guardrail switched to strict YES parsing with the user's text passed as delimited data). The one miss is a gibberish string, which the deliberately permissive prompt does not treat as spam. The cases were written by the author, so they are on the easy side.
 
 ### Cache speed (retrieval step only)
 
@@ -193,7 +194,18 @@ A cache hit takes about 0.07 ms against a median of about 14 ms uncached on the 
 
 The gain is in ranking, not in coverage: one question more is found, which is within noise, while the right chunk moves up (on the three textbook questions with the lowest context precision, the evidence went from ranks 1, 3 and 2 among 6 chunks to rank 1 among 4). Top 3 dropped a question top 4 kept, so top 4 was chosen. The added ~50 ms is small next to a 1 to 4 second model call.
 
-In the end-to-end RAGAS run on the 21 questions that were scored both before and after (single run each), context precision went from 0.766 to 0.823, with answer relevancy (0.895 vs 0.891) and faithfulness (1.0) unchanged. One trade-off is real: on the short project guide the score dropped (0.70 to 0.54 over its 6 questions), while the textbook and the paper improved. The cross-encoder was trained on web search queries and ranks the guide's checklist-style text less well.
+End to end, on the same 24 questions as the earlier baseline (one run each):
+
+| Document | Context precision | Faithfulness | Answer relevancy |
+|---|---|---|---|
+| Textbook (10 q) | 0.72 → 0.90 | 1.0 → 0.97 | 0.80 → 0.77 |
+| Research paper (8 q) | 0.84 → 0.87 | 1.0 → 1.0 | 0.90 → 0.85 |
+| Project guide (6 q) | 0.70 → 0.76 | 1.0 → 1.0 | 0.94 → 0.85 |
+| **All 24** | **0.75 → 0.86** | **1.0 → 0.99** | **0.87 → 0.81** |
+
+Context precision rose for every document. Answer relevancy fell; the largest drops (to 0.36 and 0.38) are on answers that are correct but terse, such as "eval numbers, never training loss". RAGAS answer relevancy generates questions back from the answer and compares them with the original, so a short answer that does not repeat the question's subject scores low. The one faithfulness drop (0.75) is an answer that matches the textbook on reading, where the judge marked one clause unsupported. An earlier partial run had shown the project guide dropping (0.70 to 0.54); this full run shows it rising, so that difference was within single-run noise.
+
+The quota ran out while this run was being scored, leaving 13 questions unscored; `rescore.py` re-ran only the judge on the saved answers, without asking the chatbot again.
 
 That run also exposed a regression from a separate change: after the thread id stopped being written into the prompt, the model answered three general-sounding textbook questions from its own knowledge without searching the document. The prompt now tells it to retrieve first for anything the document could answer, and a re-check of those three questions showed all three retrieving again.
 
@@ -214,7 +226,15 @@ The miss before the reranker was a question about "human approval" whose answer 
 
 ### Energy-safety question set
 
-`eval_questions_energy/` has 11 questions over the two OSHA regulations in the sample corpus (7 single-fact, 2 multi-passage, 2 unanswerable such as penalty amounts, which neither regulation states), with every evidence phrase checked by `verify_questions.py`. Results will be added after the run.
+`eval_questions_energy/` has 11 questions over the two OSHA regulations in the sample corpus (7 single-fact, 2 multi-passage, 2 unanswerable such as penalty amounts, which neither regulation states), with every evidence phrase checked by `verify_questions.py`. The questions were written before any run.
+
+| Check | Result |
+|---|---|
+| RAGAS on the 9 answerable questions | faithfulness 1.0, answer relevancy 0.83, context precision 0.76 |
+| All evidence retrieved (single-fact and multi-passage) | 9/9 |
+| Unanswerable questions refused | 2/2 |
+
+The regulations are long (536 chunks) and laid out in two columns with words hyphenated across lines, which makes them harder to retrieve from than the other test documents.
 
 ### Reproducing the numbers
 
@@ -231,6 +251,7 @@ python guardrail_eval.py              # guardrail accuracy
 python compare_rerank.py              # hybrid vs reranked retrieval, no LLM calls
 python eval_hard.py                   # hard questions: refusals and multi-passage retrieval
 python injection_eval.py              # prompt injection planted in a document
+python rescore.py eval_runs/<run>.json  # re-score only questions the judge missed (quota), no new chatbot calls
 python verify_questions.py eval_questions_energy
 python evaluation.py --questions-dir eval_questions_energy --label energy
 python eval_hard.py --questions-dir eval_questions_energy --label energy
@@ -277,7 +298,7 @@ The scripts that call the model make many requests. On the Gemini free tier (500
 - **The guardrail is deliberately permissive**: it blocks clearly abusive, illegal or spam input and does not block gibberish.
 - **No runtime hallucination check**: groundedness relies on the system prompt plus offline evaluation, not a live verifier.
 - **Evaluation limits**: 24 standard, 7 hard and 11 energy questions, written by the author; one run per measurement; the judge is from the same model family as the answerer.
-- **Reranker trade-off**: it helped the textbook and the paper but scored lower on the short project guide (single run).
+- **Answer relevancy fell with the reranker** (0.87 to 0.81): mostly terse but correct answers, a known weakness of how RAGAS scores relevancy, but a real number.
 - **Two model calls per turn** (guardrail and answer), which halves how many questions the free tier allows per day.
 - **Paired `$` signs render as math**: answers are markdown, so an answer quoting two dollar amounts can show the text between them as a formula.
 - **The Codespaces dev container uses Python 3.11**, while the project is developed and tested on 3.14.
@@ -324,6 +345,7 @@ RAG_Chat_Bot/
 ├── llm_config.py              # Single place that selects the LLM
 ├── patch_ragas.py             # One-command fix for the ragas import problem
 ├── evaluation.py              # RAGAS evaluation over eval_questions/
+├── rescore.py                 # Re-scores questions the RAGAS judge missed, from a saved run
 ├── eval_questions/            # Hand-checked questions with evidence phrases (one file per document)
 ├── verify_questions.py        # Confirms every evidence phrase exists in its PDF
 ├── compare_retrieval.py       # FAISS-only vs hybrid retrieval comparison
